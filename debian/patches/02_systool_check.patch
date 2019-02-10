@@ -1,0 +1,58 @@
+Description: Improve wording and location of sysfsutils check
+Author: Adam Conrad <adconrad@0c3.net>
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/1529590
+
+--- powerpc-utils-1.3.1.orig/scripts/hvcsadmin
++++ powerpc-utils-1.3.1/scripts/hvcsadmin
+@@ -311,8 +311,8 @@ sub findsystools() {
+     verboseprint("$app_name: looking for \"systool\" application.\n");
+ 
+     if ($whichline eq "") {
+-        errorprint("$app_name: systool is not installed or not in the path?\n");
+-        errorprint("$app_name: systool is required by the $app_name script.\n");
++        errorprint("$app_name: systool command not found.\n");
++        errorprint("$app_name: Please install the 'sysfsutils' package and retry.\n");
+         return -1;
+     }
+     verboseprint("$app_name: found \"systool\" at $whichline\.\n");
+@@ -707,6 +707,13 @@ GetOptions (
+ 
+     verboseprint("$app_name: executing in verbose mode.\n");
+ 
++    #--------------- Look for the systool application -----------------------
++    # The systool application is required for invoking most/many of these
++    # operations so we'll express it as a standard requirement.
++    if (findsystools()) {
++        exit;
++    }
++
+     # DON'T rely on the module existence to determine whether $driver is
+     # supported since it could have been built into the kernel.
+ 
+@@ -715,13 +722,6 @@ GetOptions (
+         exit;
+     }
+ 
+-    #--------------- Look for the systool application -----------------------
+-    # The systool application is required for invoking most/many of these
+-    # operations so we'll express it as a standard requirement.
+-    if (findsystools()) {
+-        exit;
+-    }
+-
+     if ($status) {
+         status();
+         exit;
+--- powerpc-utils-1.3.1.orig/scripts/vscsisadmin
++++ powerpc-utils-1.3.1/scripts/vscsisadmin
+@@ -160,8 +160,8 @@ sub findsystools() {
+     }
+ 
+     if ($whichline eq "") {
+-        print "$app_name\: systool is not installed or not in the path?\n";
+-        print "$app_name\: systool is required by the $app_name script.\n";
++        print "$app_name\: systool command not found.\n";
++        print "$app_name\: Please install the 'sysfsutils' package and retry.\n";
+         return -1;
+     }
+     if ($noisy > 1) {

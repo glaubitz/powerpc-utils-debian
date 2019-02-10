@@ -1,0 +1,150 @@
+powerpc-utils (1.3.2-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * 03_udevadm_path.patch: Switch udevadm path prefix
+    from /sbin to /bin (closes: #852575)
+
+ -- John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>  Sun, 10 Feb 2019 14:35:38 +0100
+
+powerpc-utils (1.3.2-1) unstable; urgency=medium
+
+  * New upstream release, including bashism fix (closes: #830089)
+
+ -- Adam Conrad <adconrad@0c3.net>  Fri, 22 Jul 2016 17:18:12 -0600
+
+powerpc-utils (1.3.1-2) unstable; urgency=medium
+
+  * Don't ship /usr/sbin/snap, it's only used on RHEL and SLES installs.
+
+ -- Adam Conrad <adconrad@0c3.net>  Sun, 17 Apr 2016 06:46:05 -0600
+
+powerpc-utils (1.3.1-1) unstable; urgency=medium
+
+  * New upstream release, update debian/copyright to GPL (LP: #1539542)
+  * Rewrite debian/watch file to track upstream's move to github/nfont.
+  * Update Standards-Version to 3.9.7 and tidy up our lintian warnings.
+  * Utilize dh-autoreconf because upstream no longer ships ./configure.
+  * 01_ipmitool_check.patch: Suggest package install in ipmitool check.
+  * 02_systool_check.patch: Fix and ipmrove systool test (LP: #1529590)
+  * debian/control: Suggest sysfsutils and ipmitool for the above bits.
+
+ -- Adam Conrad <adconrad@0c3.net>  Tue, 29 Mar 2016 16:09:42 -0600
+
+powerpc-utils (1.2.26-3) unstable; urgency=medium
+
+  * Rename to powerpc-utils to match upstream (LP: #1523627)
+  * Provide metapackage to pull in pmac-utils on BE arches.
+
+ -- Adam Conrad <adconrad@0c3.net>  Sun, 27 Mar 2016 13:47:47 -0600
+
+powerpc-ibm-utils (1.2.26-2) unstable; urgency=medium
+
+  * bad_variable.patch: Add extra quoting to update_flash (LP: #1491977)
+  * stop_kexec_nv.patch: Stop kexec before starting flash (LP: #1491063)
+  * stop_kexec_vm.patch: Likewise, but also do it for PowerVM platforms.
+
+ -- Adam Conrad <adconrad@0c3.net>  Thu, 15 Oct 2015 21:46:32 -0600
+
+powerpc-ibm-utils (1.2.26-1) unstable; urgency=medium
+
+  * New upstream release, with many drmgr memory fixes (LP: #1455580)
+  * debian/control: Bump to Standards-Version 3.9.6, with no changes.
+
+ -- Adam Conrad <adconrad@0c3.net>  Mon, 27 Jul 2015 15:03:45 -0600
+
+powerpc-ibm-utils (1.2.25-1) unstable; urgency=medium
+
+  * New upstream release, with LE and hotplug fixes (LP: #1441856)
+  * Drop our ppc64_cpu manpage, upstream has written a better one.
+
+ -- Adam Conrad <adconrad@0c3.net>  Mon, 13 Apr 2015 11:14:55 -0600
+
+powerpc-ibm-utils (1.2.24-1) unstable; urgency=medium
+
+  * New upstream release, with still more LE fixes (closes: #767854)
+  * Update debian/watch site from ozlabs to sf.net (closes: #774958)
+
+ -- Adam Conrad <adconrad@0c3.net>  Fri, 16 Jan 2015 16:04:49 -0700
+
+powerpc-ibm-utils (1.2.22-1) unstable; urgency=medium
+
+  * New upstream release, with more little-endian fixes (LP: #1359422)
+
+ -- Adam Conrad <adconrad@0c3.net>  Fri, 03 Oct 2014 15:50:11 -0600
+
+powerpc-ibm-utils (1.2.21-1) unstable; urgency=medium
+
+  * Adopt powerpc-ibm-utils, in conjuction with IBM (closes: #677761)
+  * New upstream release, with several endianness and other bug fixes.
+  * Define the new --threads-per-core option in our ppc64_cpu manpage.
+
+ -- Adam Conrad <adconrad@0c3.net>  Sun, 29 Jun 2014 23:03:37 -0600
+
+powerpc-ibm-utils (1.2.20-1) unstable; urgency=medium
+
+  * QA Upload.
+  * New upstream release, with ofpathname and lsslot fixes.
+  * ofpathname should work on all platforms now (closes: #611588),
+    though still doesn't handle appending partition info (#405337)
+
+ -- Adam Conrad <adconrad@debian.org>  Sun, 23 Mar 2014 11:13:24 -0600
+
+powerpc-ibm-utils (1.2.19-1) unstable; urgency=medium
+
+  * QA Upload.
+  * New upstream release (closes: #737112)
+  * Convert to dh(1) and bump build-dep to debhelper 9.
+  * Drop obsolete debian/patches.
+  * Enable build on ppc64el.
+  * Update ppc64_cpu manpage with new options.
+  * Add missing build-dep on zlib1g-dev.
+
+ -- Adam Conrad <adconrad@debian.org>  Wed, 12 Mar 2014 13:50:07 -0600
+
+powerpc-ibm-utils (1.2.12-1) unstable; urgency=low
+
+  * QA upload.
+  * Set the maintainer to Debian QA Group <packages@qa.debian.org> and remove
+    the uploaders.
+  * New upstream version:
+    - Fixes build with non-bash shells (closes: #612543).
+    - Fixes ofpathname (closes: #607001)
+    - Add a build-depends on librtas-dev, librtasevent-dev.
+  * Add a depends on bc for ofpathname (closes: #625728).
+  * Switch to 3.0 (quilt) format.
+  * Add build-arch and build-indep targets.
+  * Bump Standards-Version to 3.9.3.
+  * Remove Vcs-* entries from debian/control as they are not valid anymore.
+  * Add ppc64 to the list of architectures.
+
+ -- Aurelien Jarno <aurel32@debian.org>  Fri, 29 Jun 2012 23:54:32 +0000
+
+powerpc-ibm-utils (1.1.0-1) unstable; urgency=low
+
+  * New upstream release. (Closes: #436937)
+    + Write and add a manpage for the ppc64_cpu utility.
+    + Update long description in debian/control to include the
+      ppc64_cpu utility.
+  * These utilities are not really tied to a specific bootloader,
+    such as yaboot, because grub2 makes use of ofpathname. Therefore,
+    instead of the Yaboot Maintainers Team, set the maintainer to me.
+  * Switch from dpatch to quilt.
+  * Bump Standards-Version to 3.7.3.
+  * Add the Homepage field and remove it from the long description.
+  * Add the Vcs-Git/Vcs-Browser fields.
+  * Add the DM-Upload-Allowed field.
+  * Fix lintian warning "debian-rules-ignores-make-clean-error
+    line 44".
+  * Remove unused configure target in debian/rules.
+  * Remove the lsprop utility which is already in the powerpc-utils
+    package.
+
+ -- Aurélien GÉRÔME <ag@roxor.cx>  Tue, 05 Feb 2008 15:40:05 +0100
+
+powerpc-ibm-utils (1.0.2-1) unstable; urgency=low
+
+  * Initial release. (Closes: #386675)
+  * Set priority/section to important/utils like the powerpc-utils
+    package.
+
+ -- Aurélien GÉRÔME <ag@roxor.cx>  Sun, 24 Sep 2006 18:49:59 +0200

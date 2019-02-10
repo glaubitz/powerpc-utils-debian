@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+%:
+	dh $@ --with autoreconf --parallel
+
+# Remove non-FHS doc directory installed by upstream Makefile:
+override_dh_auto_install:
+	dh_auto_install
+	rm -rf debian/tmp/usr/share/doc/packages
+	# snap is only useful on RHEL/SLES:
+	rm debian/tmp/usr/sbin/snap
+	rm debian/tmp/usr/share/man/man8/snap.8

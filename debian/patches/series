@@ -1,0 +1,3 @@
+01_ipmitool_check.patch
+02_systool_check.patch
+03_udevadm_path.patch

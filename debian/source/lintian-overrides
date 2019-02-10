@@ -1,0 +1,2 @@
+# Upstream doesn't provide a GPG-signed download, stop bugging me:
+powerpc-utils source: debian-watch-may-check-gpg-signature

@@ -1,0 +1,32 @@
+Source: powerpc-utils
+Section: utils
+Priority: important
+Maintainer: Adam Conrad <adconrad@0c3.net>
+Uploaders: Frederic Bonnard <frederic@fr.ibm.com>
+Build-Depends: debhelper (>= 9), dh-autoreconf, librtas-dev, librtasevent-dev, zlib1g-dev
+Standards-Version: 3.9.7
+Homepage: http://powerpc-utils.ozlabs.org/
+
+Package: powerpc-utils
+Section: metapackages
+Architecture: powerpc ppc64 ppc64el
+Depends: ${misc:Depends}, powerpc-ibm-utils, pmac-utils [powerpc ppc64]
+Description: utilities for maintenance of PowerPC platforms (metapackage)
+ The powerpc-utils metapackage pulls in the appropriate tools for each
+ Debian PowerPC port.
+
+Package: powerpc-ibm-utils
+Architecture: powerpc ppc64 ppc64el
+Depends: ${shlibs:Depends}, ${misc:Depends}, bash (>= 3), bc
+Suggests: sysfsutils, ipmitool
+Description: utilities for maintenance of IBM PowerPC platforms
+ The powerpc-ibm-utils package provides the utilities listed below
+ which are intended for the maintenance of PowerPC platforms. Further
+ documentation for each of the utilities is available from their
+ respective man pages.
+ .
+  * nvram - NVRAM access utility
+  * bootlist - boot configuration utility
+  * ofpathname - translate logical device names to OF names
+  * snap - system configuration snapshot
+  * ppc64_cpu - cpu settings utility

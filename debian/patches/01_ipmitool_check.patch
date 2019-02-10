@@ -1,0 +1,14 @@
+Description: Improve wording of missing ipmitool message
+Author: Adam Conrad <adconrad@0c3.net>
+
+--- powerpc-utils-1.3.1.orig/scripts/update_flash_nv
++++ powerpc-utils-1.3.1/scripts/update_flash_nv
+@@ -464,7 +464,7 @@ fsp_display_current_fw_version() {
+ 	which ipmitool >/dev/null 2>&1
+ 	if [ $? -ne 0 ]; then
+ 		echo "update_flash: ipmitool command not found."
+-		error $E_IPMI "Please install ipmitool and retry."
++		error $E_IPMI "Please install the 'ipmitool' package and retry."
+ 	fi
+ 
+ 	# Is BMC alive ?
