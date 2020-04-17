@@ -27,12 +27,17 @@
 #include "rtas_calls.h"
 #include "drpci.h"
 #include "dr.h"
-#include "lsslot.h"
 #include "drmem.h"
 #include "pseries_platform.h"
 
+#include "options.c"
+
 int output_level = 0;
 int log_fd = 0;
+
+int is_lsslot_cmd = 1;
+
+extern int lsslot_chrp_cpu(void);
 
 /**
  * struct print_node
@@ -400,41 +405,28 @@ print_phpslot_line(struct print_node *pnode, char *fmt)
 
 /**
  * parse_options
- * @brief parse the command line options and fillin the cmd_opts struct
+ * @brief parse the command line options and fillin the options struct
  *
  * @param argc
  * @param argv
- * @param opts
  */
-static void
-parse_options(int argc, char *argv[], struct cmd_opts *opts)
+static void parse_options(int argc, char *argv[])
 {
 	int c;
 
 	while ((c = getopt(argc, argv, "abc:d:F:ops:w:")) != EOF) {
 		switch (c) {
 		    case 'a':
-			opts->a_flag = 1;
+			show_available_slots = 1;
 			break;
 
 		    case 'b':
-			opts->b_flag = 1;
+			show_cpus_and_caches = 1;
 			break;
 
 		    case 'c':
-			if (! strcmp(optarg, "phb"))
-				opts->slot_type = PHB;
-			else if (! strcmp(optarg, "slot"))
-				opts->slot_type = SLOT;
-			else if (! strcmp(optarg, "pci"))
-				opts->slot_type = PCI;
-			else if (! strcmp(optarg, "cpu"))
-				opts->slot_type = CPU;
-			else if (! strcmp(optarg, "mem"))
-				opts->slot_type = MEM;
-			else if (! strcmp(optarg, "port"))
-				opts->slot_type = PORT;
-			else {
+			usr_drc_type = to_drc_type(optarg);
+			if (usr_drc_type == DRC_TYPE_NONE) {
 				printf("\nThe specified connector type "
 				       "is invalid.\n\n");
 				usage();
@@ -446,13 +438,13 @@ parse_options(int argc, char *argv[], struct cmd_opts *opts)
 			break;
 
 		    case 'F':
-			opts->delim = optarg;
+			usr_delimiter = optarg;
 			/* make sure the arg specified is only one character
 			 * long and is not the '%' character which would
 			 * confuse the formatting.
 			 */
-			if ((opts->delim[1] != '\0')
-			    || (opts->delim[0] == '%')) {
+			if ((usr_delimiter[1] != '\0')
+			    || (usr_delimiter[0] == '%')) {
 				say(ERROR, "You may specify only one character "
 				    "for the -F option,\nand it must not "
 				    "be the %% character.\n");
@@ -461,20 +453,20 @@ parse_options(int argc, char *argv[], struct cmd_opts *opts)
 			break;
 
 		    case 'o':
-			opts->o_flag = 1;
+			show_occupied_slots = 1;
 			break;
 
 		    case 'p':
-			opts->p_flag = 1;
+			show_caches = 1;
 			break;
 
 		    case 's':
-			opts->s_name = optarg;
+			usr_drc_name = optarg;
 			break;
 
 		    case 'w':
-			opts->timeout = strtoul(optarg, NULL, 10) * 60;
-			if (opts->timeout < 0)
+			usr_timeout = strtoul(optarg, NULL, 10) * 60;
+			if (usr_timeout < 0)
 				usage();
 			break;
 
@@ -485,60 +477,64 @@ parse_options(int argc, char *argv[], struct cmd_opts *opts)
 	}
 
 	/* Validate the options */
-	switch (opts->slot_type) {
-	    case SLOT:
-	    case PORT:
+	switch (usr_drc_type) {
+	case DRC_TYPE_SLOT:
+	case DRC_TYPE_PORT:
 		/* The a,b,o,p flags are not valid for slot */
-		if (opts->a_flag || opts->b_flag || opts->o_flag ||
-		    opts->p_flag)
+		if (show_available_slots || show_cpus_and_caches ||
+		    show_occupied_slots || show_caches)
 			usage();
 
 		/* Now, to make the code work right (which is wrong) we
 		 * need to set the a and o flags if the s flag wasn't
 		 * specified.
 		 */
-		if (opts->s_name == NULL) {
-			opts->a_flag = 1;
-			opts->o_flag = 1;
+		if (!usr_drc_name) {
+			show_available_slots = 1;
+			show_occupied_slots = 1;
 		}
 
 		break;
 
-	    case PHB:
+	case DRC_TYPE_PHB:
 		/* The a,b,F,o,p options are not valid for phb */
-		if (opts->a_flag || opts->b_flag || opts->delim ||
-		    opts->o_flag || opts->p_flag)
+		if (show_available_slots || show_cpus_and_caches ||
+		    usr_delimiter || show_occupied_slots || show_caches)
 			usage();
 		break;
 
-	    case PCI:
+	case DRC_TYPE_PCI:
 		/* The b,p flags are valid for pci */
-		if (opts->b_flag || opts->p_flag)
+		if (show_cpus_and_caches || show_caches)
 			usage();
 
-		/* If no flags specified, then set a_flag and o_flag
-		 * so that all slots will be formatted in the output
+		/* If no flags specified, then set show_available_slots and
+		 * show_occupied_slots so that all slots will be formatted
+		 * in the output
 		 */
-		if ((! opts->a_flag) && (! opts->o_flag)
-		    && (opts->s_name == NULL)) {
-			opts->a_flag = 1;
-			opts->o_flag = 1;
+		if ((!show_available_slots) && (!show_occupied_slots)
+		    && !usr_drc_name) {
+			show_available_slots = 1;
+			show_occupied_slots = 1;
 		}
 
 		break;
 
-	    case CPU:
+	case DRC_TYPE_CPU:
 		/* The a,F,o,s options are not valid for cpu */
-		if (opts->a_flag || opts->delim || opts->o_flag ||
-		    opts->s_name)
+		if (show_available_slots || usr_delimiter ||
+		    show_occupied_slots || usr_drc_name)
 			usage();
 
-		if (opts->b_flag && opts->p_flag) {
+		if (show_cpus_and_caches && show_caches) {
 			say(ERROR, "You cannot specify both the -b and -p "
 			    "options.\n");
 			usage();
 		}
 
+		break;
+
+	default:
 		break;
 	}
 }
@@ -547,11 +543,9 @@ parse_options(int argc, char *argv[], struct cmd_opts *opts)
  * lsslot_chrp_pci
  * @brief main entry point for lsslot command
  *
- * @param opts
  * @returns 0 on success, !0 otherwise
  */
-int
-lsslot_chrp_pci(struct cmd_opts *opts)
+int lsslot_chrp_pci(void)
 {
 	struct dr_node *all_nodes;	/* Pointer to list of all node info */
 	struct dr_node *node;	/* Used to traverse list of node info */
@@ -568,14 +562,14 @@ lsslot_chrp_pci(struct cmd_opts *opts)
 	max_desc = MAX(max_desc, strlen(dheading));
 
 	/* Get all of node(logical DR or PCI) node information */
-	if (opts->slot_type == PCI)
+	if (usr_drc_type == DRC_TYPE_PCI)
 		all_nodes = get_hp_nodes();
 	else
 		all_nodes = get_dlpar_nodes(PCI_NODES | VIO_NODES | HEA_NODES);
 
 	/* If nothing returned, then no hot plug node */
 	if (all_nodes == NULL) {
-		if (opts->slot_type == PCI)
+		if (usr_drc_type == DRC_TYPE_PCI)
 			say(ERROR, "There are no PCI hot plug slots on "
 			    "this system.\n");
 		else
@@ -592,17 +586,17 @@ lsslot_chrp_pci(struct cmd_opts *opts)
 		if (! node->is_owned || node->skip)
 			continue;
 		
-		if (opts->s_name != NULL) {
-			if (cmp_drcname(node->drc_name, opts->s_name))
+		if (usr_drc_name) {
+			if (cmp_drcname(node->drc_name, usr_drc_name))
 				insert_print_node(node);
 		}
 
 		/* If aflag and slot is empty, then format the slot */
-		else if (opts->a_flag && (node->children == NULL))
+		else if (show_available_slots && (node->children == NULL))
 			insert_print_node(node);
 
 		/* If oflag and slot occupied, then format the slot */
-		else if (opts->o_flag && (node->children != NULL))
+		else if (show_occupied_slots && (node->children != NULL))
 			insert_print_node(node);
 	}
 
@@ -610,7 +604,7 @@ lsslot_chrp_pci(struct cmd_opts *opts)
 		/* If nothing to print, display message based on if
 		 * user specified a slot or a device name.
 		 */
-		if (opts->s_name != NULL) {
+		if (!usr_drc_name) {
 			say(ERROR, "The specified PCI slot is either invalid\n"
 			    "or does not support hot plug operations.\n");
 			rc = 1;
@@ -623,10 +617,10 @@ lsslot_chrp_pci(struct cmd_opts *opts)
 	 * specified, the format string contains the delimiting character
 	 * which the user specified at the command line.
 	 */
-	if (opts->slot_type == SLOT) {
-		if (opts->delim != NULL)
-			sprintf(fmt, "%s%s%s%s%s%s", "%s", opts->delim,
-				"%s", opts->delim, "%s", opts->delim);
+	if (usr_drc_type == DRC_TYPE_SLOT) {
+		if (usr_delimiter)
+			sprintf(fmt, "%s%s%s%s%s%s", "%s", usr_delimiter,
+				"%s", usr_delimiter, "%s", usr_delimiter);
 		else {
 			sprintf(fmt, "%%-%ds%%-%ds%%-%ds", max_sname + 2,
 				max_desc + 2, LNAME_SIZE + 2);
@@ -635,9 +629,9 @@ lsslot_chrp_pci(struct cmd_opts *opts)
 			printf("%s\n", lheading);
 		}
 	} else {
-		if (opts->delim != NULL)
-			sprintf(fmt, "%s%s%s%s", "%s", opts->delim,
-				"%s", opts->delim);
+		if (usr_delimiter)
+			sprintf(fmt, "%s%s%s%s", "%s", usr_delimiter,
+				"%s", usr_delimiter);
 		else {
 			sprintf(fmt, "%%-%ds%%-%ds", max_sname + 2,
 				max_desc + 2);
@@ -654,7 +648,7 @@ lsslot_chrp_pci(struct cmd_opts *opts)
 			continue;
 		}
 
-		if (opts->slot_type == SLOT)
+		if (usr_drc_type == DRC_TYPE_SLOT)
 			print_drslot_line(p, fmt);
 		else
 			print_phpslot_line(p, fmt);
@@ -670,11 +664,9 @@ lsslot_pci_exit:
  * lsslot_chrp_phb
  * @brief Main entry point for handling lsslot_chrp_phb command
  *
- * @param opts pointer to cmd_opts struct
  * @returns 0 on success, !0 otherwise
  */
-int
-lsslot_chrp_phb(struct cmd_opts *opts)
+int lsslot_chrp_phb(void)
 {
 	struct dr_node *phb_list;
 	struct dr_node *phb;
@@ -691,8 +683,7 @@ lsslot_chrp_phb(struct cmd_opts *opts)
 		char *name;
 		int printed_count = 0;
 		
-		if ((opts->s_name != NULL) && 
-		    (strcmp(opts->s_name, phb->drc_name)))
+		if (usr_drc_name && strcmp(usr_drc_name, phb->drc_name))
 			continue;
 
 		name = strstr(phb->ofdt_path, "/pci");
@@ -720,7 +711,7 @@ lsslot_chrp_phb(struct cmd_opts *opts)
 	return 0;
 }
 
-int print_drconf_mem(struct cmd_opts *opts, struct lmb_list_head *lmb_list)
+int print_drconf_mem(struct lmb_list_head *lmb_list)
 {
 	struct dr_node *lmb;
 	struct mem_scn *scn;
@@ -746,8 +737,8 @@ int print_drconf_mem(struct cmd_opts *opts, struct lmb_list_head *lmb_list)
 	aa++;
 	aa_list_sz = be32toh(*aa++);
 
-	if (opts->s_name)
-		drc_index = strtol(opts->s_name, NULL, 0);
+	if (usr_drc_name)
+		drc_index = strtol(usr_drc_name, NULL, 0);
 
 	printf("Dynamic Reconfiguration Memory (LMB size 0x%x)\n",
 	       lmb_list->lmbs->lmb_size);
@@ -800,8 +791,7 @@ int print_drconf_mem(struct cmd_opts *opts, struct lmb_list_head *lmb_list)
 	return 0;
 }
 
-int
-lsslot_chrp_mem(struct cmd_opts *opts)
+int lsslot_chrp_mem(void)
 {
 	struct lmb_list_head *lmb_list;
 	struct dr_node *lmb;
@@ -810,13 +800,12 @@ lsslot_chrp_mem(struct cmd_opts *opts)
 	int lmb_offset = strlen(OFDT_BASE);
 
 	lmb_list = get_lmbs(LMB_NORMAL_SORT);
-	if (lmb_list == NULL || lmb_list->lmbs == NULL) {
-		free_lmbs(lmb_list);
+	if (lmb_list == NULL || lmb_list->lmbs == NULL)
 		return -1;
-	}
+
 	
 	if (lmb_list->drconf_buf) {
-		print_drconf_mem(opts, lmb_list);
+		print_drconf_mem(lmb_list);
 	} else {
 		printf("lmb size: 0x%x\n", lmb_list->lmbs->lmb_size);
 		printf("%-20s  %-5s  %c  %s\n", "Memory Node", "Name", 'R',
@@ -859,11 +848,9 @@ lsslot_chrp_mem(struct cmd_opts *opts)
  * lsslot_chrp_port
  * @brief Print LHEA ports based on command line options
  *
- * @param opts
  * @returns 0 on success, !0 otherwise
  */
-int
-lsslot_chrp_port(struct cmd_opts *opts)
+int lsslot_chrp_port(void)
 {
 	struct dr_node *all_nodes;	/* Pointer to list of all node info */
 	struct dr_node *node;		/* Used to traverse list of node info */
@@ -901,8 +888,8 @@ lsslot_chrp_port(struct cmd_opts *opts)
 			/* If there is a search parameter, add matching ports.
 			 * If there is no search, add all the ports.
 			 */
-			if (opts->s_name != NULL) {
-				if (cmp_drcname(child->drc_name, opts->s_name))
+			if (usr_drc_name) {
+				if (cmp_drcname(child->drc_name, usr_drc_name))
 					insert_print_node(child);
 			} else
 				insert_print_node(child);
@@ -913,7 +900,7 @@ lsslot_chrp_port(struct cmd_opts *opts)
 		/* If nothing to print, display message based on if
 		 * user specified a slot or a device name.
 		 */
-		if (opts->s_name != NULL) {
+		if (usr_drc_name) {
 			say(ERROR, "The specified port was not found.\n");
 			rc = 1;
 		}
@@ -925,8 +912,8 @@ lsslot_chrp_port(struct cmd_opts *opts)
 	 * specified, the format string contains the delimiting character
 	 * which the user specified at the command line.
 	 */
-	if (opts->delim != NULL)
-		sprintf(fmt, "%s%s%s\n", "%s", opts->delim, "%s");
+	if (usr_delimiter)
+		sprintf(fmt, "%s%s%s\n", "%s", usr_delimiter, "%s");
 	else {
 		sprintf(fmt, "%%-%ds%%-%ds\n", max_sname + 2, max_desc + 2);
 		/* Print out the header. */
@@ -947,7 +934,6 @@ lsslot_port_exit:
 int
 main(int argc, char *argv[])
 {
-	struct cmd_opts opts;
 	int rc;
 
 	switch (get_platform()) {
@@ -962,11 +948,9 @@ main(int argc, char *argv[])
 	if (! valid_platform("chrp"))
 		exit(1);
 
-	memset(&opts, 0, sizeof(opts));
-
 	/* default to DRSLOT type */
-	opts.slot_type = SLOT;
-	parse_options(argc, argv, &opts);
+	usr_drc_type = DRC_TYPE_SLOT;
+	parse_options(argc, argv);
 
 	rc = dr_lock();
 	if (rc) {
@@ -975,26 +959,24 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 
-	switch (opts.slot_type) {
-	    case SLOT:
-	    case PCI:
-		rc = lsslot_chrp_pci(&opts);
+	switch (usr_drc_type) {
+	case DRC_TYPE_SLOT:
+	case DRC_TYPE_PCI:
+		rc = lsslot_chrp_pci();
 		break;
-
-	    case PHB:
-		rc = lsslot_chrp_phb(&opts);
+	case DRC_TYPE_PHB:
+		rc = lsslot_chrp_phb();
 		break;
-
-	    case CPU:
-		rc = lsslot_chrp_cpu(&opts);
+	case DRC_TYPE_CPU:
+		rc = lsslot_chrp_cpu();
 		break;
-
-	    case MEM:
-		rc = lsslot_chrp_mem(&opts);
+	case DRC_TYPE_MEM:
+		rc = lsslot_chrp_mem();
 		break;
-
-	    case PORT:
-		rc = lsslot_chrp_port(&opts);
+	case DRC_TYPE_PORT:
+		rc = lsslot_chrp_port();
+		break;
+	default:
 		break;
 	}
 

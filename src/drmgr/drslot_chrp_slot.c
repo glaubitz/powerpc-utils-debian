@@ -39,14 +39,13 @@ slot_usage(char **pusage)
 	*pusage = usagestr;
 }
 
-static int
-query_slot(struct dr_node *node, struct options *opts)
+static int query_slot(struct dr_node *node)
 {
 	if (node == NULL)
 		return RC_NONEXISTENT;
 
 	if (! node->is_owned) {
-		say(ERROR, "%s not owned by partition\n", opts->usr_drc_name);
+		say(ERROR, "%s not owned by partition\n", usr_drc_name);
 		return RC_DONT_OWN;
 	}
 
@@ -211,13 +210,12 @@ acquire_slot(char *drc_name, struct dr_node **slot)
  * add_slot
  *
  */
-static int
-add_slot(struct options *opts)
+static int add_slot()
 {
 	struct dr_node *node = NULL;
 	int rc, n_children = 0;
 	
-	rc = acquire_slot(opts->usr_drc_name, &node);
+	rc = acquire_slot(usr_drc_name, &node);
 	if (rc)
 		return rc;
 	
@@ -290,16 +288,15 @@ slot_add_exit:
 	return rc;
 }
 
-int
-valid_slot_options(struct options *opts)
+int valid_slot_options(void)
 {
-	if (opts->usr_drc_name == NULL) {
+	if (!usr_drc_name) {
 		say(ERROR, "A drc name must be specified\n");
 		return -1;
 	}
 
-        if ((opts->action != ADD) && (opts->action != REMOVE)
-            && (opts->action != QUERY)) {
+        if ((usr_action != ADD) && (usr_action != REMOVE)
+            && (usr_action != QUERY)) {
                 say(ERROR, "The '-r', '-a', or '-Q' option must be specified "
                     "for slot operations.\n");
                 return -1;
@@ -308,8 +305,7 @@ valid_slot_options(struct options *opts)
 	return 0;
 }
 
-int
-drslot_chrp_slot(struct options *opts)
+int drslot_chrp_slot(void)
 {
 	struct dr_node *node;
 	int rc;
@@ -320,30 +316,29 @@ drslot_chrp_slot(struct options *opts)
 		return -1;
 	}
 
-	node = get_node_by_name(opts->usr_drc_name, PCI_NODES | VIO_NODES);
+	node = get_node_by_name(usr_drc_name, PCI_NODES | VIO_NODES);
 
-	switch (opts->action) {
+	switch (usr_action) {
 	    case ADD:
 		if (node && node->is_owned) {
-			say(ERROR, "partition already owns %s\n",
-			    opts->usr_drc_name);
+			say(ERROR, "partition already owns %s\n", usr_drc_name);
 			rc = RC_ALREADY_OWN;
 		} else {
 			free_node(node);
 			node = NULL;
 
-			rc = add_slot(opts);
+			rc = add_slot();
 		}
 		break;
 
 	    case REMOVE:
 		if (node == NULL) {
-			say(ERROR, "%s does not exist\n", opts->usr_drc_name);
+			say(ERROR, "%s does not exist\n", usr_drc_name);
 			rc = RC_NONEXISTENT;
 		} else {	
 			if (! node->is_owned) {
 				say(ERROR, "%s not owned by partition\n",
-				    opts->usr_drc_name);
+				    usr_drc_name);
 				rc = RC_DONT_OWN;
 			} else
 				rc = remove_slot(node);
@@ -351,7 +346,7 @@ drslot_chrp_slot(struct options *opts)
 		break;
 
 	    case QUERY:
-		rc = query_slot(node, opts);
+		rc = query_slot(node);
 		break;
 
 	    default:

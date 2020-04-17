@@ -107,20 +107,20 @@ void * __zalloc(size_t size, const char *func, int line)
 	return data;
 }
 
-static int check_kmods(struct options *opts)
+static int check_kmods(void)
 {
 	struct stat sbuf;
 	int rc;
 
 	/* We only need to do this for PHB/SLOT/PCI operations */
-	if (opts->ctype && strcmp(opts->ctype, "pci")
-	    && strcmp(opts->ctype, "phb") && strcmp(opts->ctype, "slot"))
+	if (usr_drc_type != DRC_TYPE_PCI && usr_drc_type != DRC_TYPE_PHB &&
+	    usr_drc_type != DRC_TYPE_SLOT && !display_capabilities)
 		return 0;
 
 	/* We don't use rpadlar_io/rpaphp for PCI operations run with the
 	 * -v / virtio flag, which relies on generic PCI rescan instead
 	 */
-	if (opts->ctype && !strcmp(opts->ctype, "pci") && opts->pci_virtio == 1)
+	if (usr_drc_type == DRC_TYPE_PCI && pci_virtio && !display_capabilities)
 		return 0;
 
 	/* Before checking for dlpar capability, we need to ensure that
@@ -158,7 +158,7 @@ static int check_kmods(struct options *opts)
  * @brief Initialization routine for drmgr and lsslot
  *
  */
-inline int dr_init(struct options *opts)
+inline int dr_init(void)
 {
 	int rc;
 
@@ -195,7 +195,7 @@ inline int dr_init(struct options *opts)
 		return -1;
 	}
 
-	rc = check_kmods(opts);
+	rc = check_kmods();
 	if (rc) {
 		if (log_fd)
 			close(log_fd);
@@ -308,7 +308,6 @@ int dr_lock(void)
 	struct flock    dr_lock_info;
 	int             rc;
 	mode_t          old_mode;
-	int             first_try = 1;
 
 	old_mode = umask(0);
 	dr_lock_fd = open(DR_LOCK_FILE, O_RDWR | O_CREAT,
@@ -323,21 +322,18 @@ int dr_lock(void)
 	dr_lock_info.l_len = 0;
 
 	do {
-		if (!first_try) {
-			sleep(1);
-			first_try = 0;
-		}
-
 		rc = fcntl(dr_lock_fd, F_SETLK, &dr_lock_info);
-		if (rc != -1)
+		if (rc == 0)
 			return 0;
+
+		/* lock may be held by another process */
+		if (errno != EACCES && errno != EAGAIN)
+			break;
 
 		if (drmgr_timed_out())
 			break;
 
-		if (rc == -1 && errno == EACCES)
-			continue;
-
+		sleep(1);
 	} while (1);
 
 	close(dr_lock_fd);
@@ -467,11 +463,11 @@ add_node(char *path, struct of_node *new_nodes)
 	say(DEBUG, "ofdt update: %s\n", buf);
 
 	fd = open(OFDTPATH, O_WRONLY);
-	if (fd <= 0) {
+	if (fd == -1) {
 		say(ERROR, "Failed to open %s: %s\n", OFDTPATH,
 		    strerror(errno));
 		free(buf);
-		return errno;
+		return -1;
 	}
 
 	rc = write(fd, buf, bufsize);
@@ -516,10 +512,10 @@ remove_node(char *path)
 	cmdlen = strlen(buf);
 
 	fd = open(OFDTPATH, O_WRONLY);
-	if (fd <= 0) {
+	if (fd == -1) {
 		say(ERROR, "Failed to open %s: %s\n", OFDTPATH,
 		    strerror(errno));
-		return errno;
+		return -1;
 	}
 
 	rc = write(fd, buf, cmdlen);
@@ -667,10 +663,10 @@ update_property(const char *buf, size_t len)
 	say(DEBUG, "Updating OF property\n");
 
 	fd = open(OFDTPATH, O_WRONLY);
-	if (fd <= 0) {
+	if (fd == -1) {
 		say(ERROR, "Failed to open %s: %s\n", OFDTPATH,
 		    strerror(errno));
-		return errno;
+		return -1;
 	}
 
 	rc = write(fd, buf, len);
@@ -978,6 +974,8 @@ char *php_slot_type_msg[]={
 	"PCI-E capable, Rev 4, 16x lanes with 1 lane connected",    /* 40 */
 	"PCI-E capable, Rev 4, 16x lanes with 8x lanes connected",
 	"PCI-E capable, Rev 4, 16x lanes with 16x lanes connected",
+	"U.2 PCI-E capable, Rev 3, 4x lanes with 4x lanes connected",
+	"U.2 PCI-E capable, Rev 4, 4x lanes with 4x lanes connected",
 };
 
 char *
@@ -988,7 +986,7 @@ node_type(struct dr_node *node)
 
 	desc_msg_num = atoi(node->drc_type);
 	if ((desc_msg_num >= 1 &&  desc_msg_num <= 8) ||
-	    (desc_msg_num >= 11 && desc_msg_num <= 42))
+	    (desc_msg_num >= 11 && desc_msg_num <= 44))
 		desc = php_slot_type_msg[desc_msg_num];
 	else {
 		switch (node->dev_type) {
@@ -1028,8 +1026,7 @@ valid_platform(const char *platform)
 
 	rc = get_property(OFDT_BASE, "device_type", buf, 128);
 	if (rc) {
-		say(ERROR, "Cannot open %s: %s\n", PLATFORMPATH,
-		    strerror(errno));
+		say(ERROR, "Cannot validate platform %s\n", platform);
 		return 0;
 	}
 
@@ -1155,11 +1152,9 @@ static struct sysparm_mapping mem_sysparm_table[] = {
  * since the kernel interface accepts only absolute values.
  *
  * @param parm
- * @param quantity
  * @returns 0 on success, !0 otherwise
  */
-int
-update_sysparm(struct options *opts)
+int update_sysparm(void)
 {
 	struct sysparm_mapping *sysparm_table;
 	unsigned long curval;
@@ -1167,7 +1162,7 @@ update_sysparm(struct options *opts)
 	char *linux_parm = NULL;
 	
 	/* Validate capability */
-	if (! strcmp(opts->ctype, "cpu")) {
+	if (usr_drc_type == DRC_TYPE_CPU) {
 		if (! cpu_entitlement_capable()) {
 			say(ERROR, "CPU entitlement capability is not enabled "
 			    "on this platform.\n");
@@ -1175,7 +1170,7 @@ update_sysparm(struct options *opts)
 		}
 
 		sysparm_table = cpu_sysparm_table;
-	} else if (! strcmp(opts->ctype, "mem")) {
+	} else if (usr_drc_type == DRC_TYPE_MEM) {
 		if (! mem_entitlement_capable()) {
 			say(ERROR, "Memory entitlement capability is not "
 			    "enabled on this platform.\n");
@@ -1184,8 +1179,8 @@ update_sysparm(struct options *opts)
 
 		sysparm_table = mem_sysparm_table;
 	} else {
-		say(ERROR, "Invalid entitlement update type \"%s\" "
-		    "specified.\n", opts->ctype);
+		say(ERROR, "Invalid entitlement update type \"%d\" "
+		    "specified.\n", usr_drc_type);
 		return -1;
 	}
 	
@@ -1194,7 +1189,7 @@ update_sysparm(struct options *opts)
 	 */
 	i = 0;
 	while (sysparm_table[i].drmgr_name) {
-		if (! strcmp(sysparm_table[i].drmgr_name, opts->p_option)) {
+		if (!strcmp(sysparm_table[i].drmgr_name, usr_p_option)) {
 			linux_parm = sysparm_table[i].linux_name;
 			break;
 		}
@@ -1204,29 +1199,29 @@ update_sysparm(struct options *opts)
 
 	if (linux_parm == NULL) {
 		say(ERROR, "The entitlement parameter \"%s\" is not "
-		    "recognized\n", opts->p_option);
+		    "recognized\n", usr_p_option);
 		return -1;
 	}
 
 	if ((get_sysparm(linux_parm, &curval)) < 0) {
 		say(ERROR, "Could not get current system parameter value of "
-		    "%s (%s)\n", linux_parm, opts->p_option);
+		    "%s (%s)\n", linux_parm, usr_p_option);
 		return -1;
 	}
 
-	if (opts->action == REMOVE) {
-		if (opts->quantity > curval) {
+	if (usr_action == REMOVE) {
+		if (usr_drc_count > curval) {
 			say(ERROR, "Cannot reduce system parameter value %s by "
 			    "more than is currently available.\nCurrent "
 			    "value: %lx, asking to remove: %x\n",
-			    opts->p_option, curval, opts->quantity);
+			    usr_p_option, curval, usr_drc_count);
 			return 1;
 		}
 
-		opts->quantity = -opts->quantity;
+		usr_drc_count = -usr_drc_count;
 	}
 	
-	return set_sysparm(linux_parm, curval + opts->quantity);
+	return set_sysparm(linux_parm, curval + usr_drc_count);
 }
 
 int
@@ -1460,6 +1455,7 @@ int kernel_dlpar_exists(void)
 int do_kernel_dlpar(const char *cmd, int cmdlen)
 {
 	int fd, rc;
+	int my_errno;
 
 	say(DEBUG, "Initiating kernel DLPAR \"%s\"\n", cmd);
 
@@ -1472,12 +1468,45 @@ int do_kernel_dlpar(const char *cmd, int cmdlen)
 	}
 
 	rc = write(fd, cmd, cmdlen);
+	my_errno = errno;
 	close(fd);
 	if (rc <= 0) {
-		say(ERROR, "Failed: %s\n", strerror(errno));
-		return rc;
+		/* write does not set errno for rc == 0 */
+		say(ERROR, "Failed to write to %s: %s\n", SYSFS_DLPAR_FILE,
+		    (rc == 0) ? "wrote 0 bytes" : strerror(my_errno));
+		return -1;
 	}
 
 	say(INFO, "Success\n");
 	return 0;
 }
+
+enum drc_type to_drc_type(const char *arg)
+{
+	if (!strncmp(arg, "pci", 3))
+		return DRC_TYPE_PCI;
+
+	if (!strncmp(arg, "slot", 4))
+		return DRC_TYPE_SLOT;
+
+	if (!strncmp(arg, "phb", 3))
+		return DRC_TYPE_PHB;
+
+	if (!strncmp(arg, "cpu", 3))
+		return DRC_TYPE_CPU;
+
+	if (!strncmp(arg, "mem", 3))
+		return DRC_TYPE_MEM;
+
+	if (!strncmp(arg, "port", 4))
+		return DRC_TYPE_PORT;
+
+	if (!strncmp(arg, "phib", 4))
+		return DRC_TYPE_HIBERNATE;
+
+	if (!strncmp(arg, "pmig", 4))
+		return DRC_TYPE_MIGRATION;
+
+	return DRC_TYPE_NONE;
+}
+

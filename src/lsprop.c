@@ -22,7 +22,12 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
+#include <getopt.h>
+#if defined(__FreeBSD__)
+#include <sys/endian.h>
+#else
 #include <endian.h>
+#endif
 
 int recurse;
 int maxbytes = 128;
@@ -32,14 +37,21 @@ unsigned char *buf;
 void lsprop(FILE *f, char *name);
 void lsdir(char *name);
 
+static struct option long_opts[] = {
+	{"version",     no_argument,    NULL, 'V'},
+	{"recurse",	no_argument,	NULL, 'R'},
+	{0, 0, 0, 0},
+};
+
 int main(int ac, char **av)
 {
     FILE *f;
-    int i;
+    int i, opt_index = 0;
     struct stat sb;
     char *endp;
 
-    while ((i = getopt(ac, av, "Rm:w:")) != EOF) {
+    while ((i = getopt_long(ac, av, "Rm:w:V",
+			    long_opts, &opt_index)) != EOF) {
 	switch (i) {
 	case 'R':
 	    recurse = 1;
@@ -61,6 +73,9 @@ int main(int ac, char **av)
 		exit(1);
 	    }
 	    break;
+	case 'V':
+	    printf("lsprop - %s\n", VERSION);
+	    return 0;
 	}
     }
 
@@ -142,21 +157,24 @@ void lsdir(char *name)
 	    }
 	}
     }
-    rewinddir(d);
-    while ((de = readdir(d)) != NULL) {
-	if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
-	    continue;
-	strcpy(q, de->d_name);
-	if (lstat(p, &sb) < 0) {
-	    perror(p);
-	    continue;
-	}
-	if (S_ISDIR(sb.st_mode)) {
-	    if (np)
-		printf("\n");
-	    printf("%s:\n", p);
-	    lsdir(p);
-	    ++np;
+
+    if (recurse) {
+	rewinddir(d);
+	while ((de = readdir(d)) != NULL) {
+	    if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+		continue;
+	    strcpy(q, de->d_name);
+	    if (lstat(p, &sb) < 0) {
+		perror(p);
+		continue;
+	    }
+	    if (S_ISDIR(sb.st_mode)) {
+		if (np)
+		    printf("\n");
+		printf("%s:\n", p);
+		lsdir(p);
+		++np;
+	    }
 	}
     }
     free(p);

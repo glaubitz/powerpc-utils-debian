@@ -306,32 +306,53 @@ get_mem_node_lmbs(struct lmb_list_head *lmb_list)
 	return rc;
 }
 
+int add_lmb(struct lmb_list_head *lmb_list, uint32_t drc_index,
+	    uint64_t address, uint64_t lmb_sz, uint32_t aa_index,
+	    uint32_t flags)
+{
+	struct dr_node *lmb;
+
+	lmb = lmb_list_add(drc_index, lmb_list);
+	if (lmb == NULL) {
+		say(DEBUG, "Could not find LMB with drc-index of %x\n",
+		    drc_index);
+		return -1;
+	}
+
+	sprintf(lmb->ofdt_path, DYNAMIC_RECONFIG_MEM);
+	lmb->lmb_size = lmb_sz;
+	lmb->lmb_address = address;
+	lmb->lmb_aa_index = aa_index;
+
+	if (flags & DRMEM_ASSIGNED) {
+		int rc;
+
+		lmb->is_owned = 1;
+
+		/* find the associated sysfs memory blocks */
+		rc = get_mem_scns(lmb);
+		if (rc)
+			return -1;
+	}
+
+	lmb_list->lmbs_found++;
+	return 0;
+}
 /**
- * get_dynamic_reconfig_lmbs
+ * get_dynamic_reconfig_lmbs_v1
  * @brief Retrieve lmbs from OF device tree located in the ibm,dynamic-memory
  * property.
  *
+ * @param lmb_sz size of LMBs
  * @param lmb_list pointer to lmb list head to populate
  * @returns 0 on success, !0 on failure
  */
 int
-get_dynamic_reconfig_lmbs(struct lmb_list_head *lmb_list)
+get_dynamic_reconfig_lmbs_v1(uint64_t lmb_sz, struct lmb_list_head *lmb_list)
 {
 	struct drconf_mem *drmem;
-	uint64_t lmb_sz;
 	int i, num_entries;
 	int rc = 0;
-
-	rc = get_property(DYNAMIC_RECONFIG_MEM, "ibm,lmb-size",
-			  &lmb_sz, sizeof(lmb_sz));
-
-	/* convert for LE systems */
-	lmb_sz = be64toh(lmb_sz);
-
-	if (rc) {
-		say(DEBUG, "Could not retrieve drconf LMB size\n");
-		return rc;
-	}
 
 	lmb_list->drconf_buf_sz = get_property_size(DYNAMIC_RECONFIG_MEM,
 						   "ibm,dynamic-memory");
@@ -360,32 +381,121 @@ get_dynamic_reconfig_lmbs(struct lmb_list_head *lmb_list)
 	drmem = (struct drconf_mem *)
 				(lmb_list->drconf_buf + sizeof(num_entries));
 	for (i = 0; i < num_entries; i++) {
-		struct dr_node *lmb;
-
-		lmb = lmb_list_add(be32toh(drmem->drc_index), lmb_list);
-		if (lmb == NULL) {
-			say(DEBUG, "Could not find LMB with drc-index of %x\n",
-			    drmem->drc_index);
-			rc = -1;
+		rc = add_lmb(lmb_list, be32toh(drmem->drc_index),
+			     be64toh(drmem->address), lmb_sz,
+			     be32toh(drmem->assoc_index),
+			     be32toh(drmem->flags));
+		if (rc)
 			break;
-		}
 
-		sprintf(lmb->ofdt_path, DYNAMIC_RECONFIG_MEM);
-		lmb->lmb_size = lmb_sz;
-		lmb->lmb_address = be64toh(drmem->address);
-		lmb->lmb_aa_index = be32toh(drmem->assoc_index);
+		drmem++; /* trust your compiler */
+	}
 
-		if (be32toh(drmem->flags) & DRMEM_ASSIGNED) {
-			lmb->is_owned = 1;
+	return rc;
+}
 
-			/* find the associated sysfs memory blocks */
-			rc = get_mem_scns(lmb);
+/**
+ * get_dynamic_reconfig_lmbs_v2
+ * @brief Retrieve the LMBs from the ibm,dynamic-memory-v2 property
+ *
+ * @param lmb_sz LMB size
+ * @param lmb_list pointer to lmb_list head to populate
+ * @returns 0 on success, !0 on failure.
+ */
+int get_dynamic_reconfig_lmbs_v2(uint64_t lmb_sz,
+				 struct lmb_list_head *lmb_list)
+{
+	struct drconf_mem_v2 *drmem;
+	uint32_t lmb_sets;
+	int i, rc = 0;
+
+	lmb_list->drconf_buf_sz = get_property_size(DYNAMIC_RECONFIG_MEM,
+						   "ibm,dynamic-memory-v2");
+	lmb_list->drconf_buf = zalloc(lmb_list->drconf_buf_sz);
+	if (lmb_list->drconf_buf == NULL) {
+		say(DEBUG, "Could not allocate buffer to get dynamic "
+		    "reconfigurable memory\n");
+		return -1;
+	}
+
+	rc = get_property(DYNAMIC_RECONFIG_MEM, "ibm,dynamic-memory-v2",
+			  lmb_list->drconf_buf, lmb_list->drconf_buf_sz);
+	if (rc) {
+		say(DEBUG, "Could not retrieve dynamic reconfigurable memory "
+		    "property\n");
+		return -1;
+	}
+
+	/* The first integer of the buffer is the number of lmb sets */
+	lmb_sets = *(int *)lmb_list->drconf_buf;
+	lmb_sets = be32toh(lmb_sets);
+
+	/* Followed by the actual entries */
+	drmem = (struct drconf_mem_v2 *)
+				(lmb_list->drconf_buf + sizeof(lmb_sets));
+
+	for (i = 0; i < lmb_sets; i++) {
+		uint32_t drc_index, seq_lmbs;
+		uint64_t address;
+		int j;
+
+		address = be64toh(drmem->base_addr);
+		drc_index = be32toh(drmem->drc_index);
+		seq_lmbs = be32toh(drmem->seq_lmbs);
+
+		for (j = 0; j < seq_lmbs; j++) {
+			uint32_t aa_index = be32toh(drmem->aa_index);
+			uint32_t flags = be32toh(drmem->flags);
+
+			rc = add_lmb(lmb_list, drc_index, address,
+				     lmb_sz, aa_index, flags);
 			if (rc)
 				break;
+
+			drc_index++;
+			address += lmb_sz;
 		}
 
-		lmb_list->lmbs_found++;
 		drmem++; /* trust your compiler */
+	}
+
+	return rc;
+}
+
+/**
+ * get_dynamic_reconfig_lmbs
+ * @brief Retrieve lmbs from OF device tree located in the ibm,dynamic-memory
+ * property.
+ *
+ * @param lmb_list pointer to lmb list head to populate
+ * @returns 0 on success, !0 on failure
+ */
+int
+get_dynamic_reconfig_lmbs(struct lmb_list_head *lmb_list)
+{
+	struct stat sbuf;
+	uint64_t lmb_sz;
+	int rc = 0;
+
+	rc = get_property(DYNAMIC_RECONFIG_MEM, "ibm,lmb-size",
+			  &lmb_sz, sizeof(lmb_sz));
+
+	/* convert for LE systems */
+	lmb_sz = be64toh(lmb_sz);
+
+	if (rc) {
+		say(DEBUG, "Could not retrieve drconf LMB size\n");
+		return rc;
+	}
+
+	if (stat(DYNAMIC_RECONFIG_MEM_V1, &sbuf) == 0) {
+		rc = get_dynamic_reconfig_lmbs_v1(lmb_sz, lmb_list);
+	} else if (is_lsslot_cmd &&
+		   stat(DYNAMIC_RECONFIG_MEM_V2, &sbuf) == 0) {
+		rc = get_dynamic_reconfig_lmbs_v2(lmb_sz, lmb_list);
+	} else {
+		say(ERROR, "No dynamic reconfiguration LMBs found\n");
+		return -1;
 	}
 
 	say(INFO, "Found %d LMBs currently allocated\n", lmb_list->lmbs_found);
@@ -533,8 +643,7 @@ get_lmbs(unsigned int sort)
  * @param start_lmb first lmbs to be searched for an available lmb
  * @returns pointer to avaiable lmb on success, NULL otherwise
  */
-static struct dr_node *
-get_available_lmb(struct options *opts, struct dr_node *start_lmb)
+static struct dr_node *get_available_lmb(struct dr_node *start_lmb)
 {
 	uint32_t drc_index;
 	struct dr_node *lmb;
@@ -544,22 +653,21 @@ get_available_lmb(struct options *opts, struct dr_node *start_lmb)
 	for (lmb = start_lmb; lmb; lmb = lmb->next) {
 		int rc;
 
-		if (opts->usr_drc_name) {
-			drc_index = strtoul(opts->usr_drc_name, NULL, 0);
+		if (usr_drc_name) {
+			drc_index = strtoul(usr_drc_name, NULL, 0);
 
-			if ((strcmp(lmb->drc_name, opts->usr_drc_name))
+			if ((strcmp(lmb->drc_name, usr_drc_name))
 			    && (lmb->drc_index != drc_index))
 				continue;
-		} else if (opts->usr_drc_index) {
-			if (lmb->drc_index != opts->usr_drc_index)
+		} else if (usr_drc_index) {
+			if (lmb->drc_index != usr_drc_index)
 				continue;
 		}
 
 		if (lmb->unusable)
 			continue;
 
-		switch (opts->action) {
-		    case ADD:
+		if (usr_action == ADD) {
 			if (lmb->is_owned)
 				continue;
 
@@ -568,9 +676,7 @@ get_available_lmb(struct options *opts, struct dr_node *start_lmb)
 				continue;
 
 			usable_lmb = lmb;
-			break;
-
-		    case REMOVE:
+		} else if (usr_action == REMOVE) {
 			/* removable is ignored if AMS ballooning is active. */
 			if ((!balloon_active && !lmb->is_removable) ||
 			    (!lmb->is_owned))
@@ -879,6 +985,7 @@ set_mem_scn_state(struct mem_scn *mem_scn, int state)
 	int rc = 0;
 	time_t t;
 	char tbuf[128];
+	int my_errno;
 
 	time(&t);
 	strftime(tbuf, 128, "%T", localtime(&t));
@@ -896,11 +1003,12 @@ set_mem_scn_state(struct mem_scn *mem_scn, int state)
 	}
 
 	rc = write(file, state_strs[state], strlen(state_strs[state]));
+	my_errno = errno;
 	close(file);
 
 	if (rc < 0) {
 		say(ERROR, "Could not write to %s to %s memory\n\t%s\n",
-		    path, state_strs[state], strerror(errno));
+		    path, state_strs[state], strerror(my_errno));
 		return rc;
 	}
 
@@ -936,10 +1044,11 @@ probe_lmb(struct dr_node *lmb)
 	int rc = 0;
 
 	probe_file = open(MEM_PROBE_FILE, O_WRONLY);
-	if (probe_file <= 0) {
+	if (probe_file == -1) {
+		int my_errno = errno;
 		say(DEBUG, "Could not open %s to probe memory\n",
 		    MEM_PROBE_FILE);
-		return errno;
+		return my_errno;
 	}
 
 	for (scn = lmb->lmb_mem_scns; scn; scn = scn->next) {
@@ -1031,19 +1140,18 @@ set_lmb_state(struct dr_node *lmb, int state)
  * @param lmb_list list of lmbs on the partition
  * @returns 0 on success, !0 otherwise
  */
-static int
-add_lmbs(struct options *opts, struct lmb_list_head *lmb_list)
+static int add_lmbs(struct lmb_list_head *lmb_list)
 {
 	int rc = 0;
 	struct dr_node *lmb_head = lmb_list->lmbs;
 	struct dr_node *lmb;
 
 	lmb_list->lmbs_modified = 0;
-	while (lmb_list->lmbs_modified < (int)opts->quantity) {
+	while (lmb_list->lmbs_modified < usr_drc_count) {
 		if (drmgr_timed_out())
 			break;
 
-		lmb = get_available_lmb(opts, lmb_head);
+		lmb = get_available_lmb(lmb_head);
 		if (lmb == NULL)
 			return -1;
 
@@ -1084,11 +1192,9 @@ add_lmbs(struct options *opts, struct lmb_list_head *lmb_list)
  * mem_add
  * @brief Add memory to the partition
  *
- * @param opts user options
  * @returns 0 on success, !0 otherwise
  */
-static int
-mem_add(struct options *opts)
+static int mem_add(void)
 {
 	struct lmb_list_head *lmb_list;
 	int rc;
@@ -1100,11 +1206,11 @@ mem_add(struct options *opts)
 		return -1;
 	}
 
-	say(DEBUG, "Attempting to add %d LMBs\n", opts->quantity);
-	rc = add_lmbs(opts, lmb_list);
+	say(DEBUG, "Attempting to add %d LMBs\n", usr_drc_count);
+	rc = add_lmbs(lmb_list);
 
 	say(DEBUG, "Added %d of %d requested LMB(s)\n", lmb_list->lmbs_modified,
-	    opts->quantity);
+	    usr_drc_count);
 	report_resource_count(lmb_list->lmbs_modified);
 
 	free_lmbs(lmb_list);
@@ -1115,22 +1221,20 @@ mem_add(struct options *opts)
  * remove_lmbs
  *
  * @param nr_lmbs
- * @param opts
  * @param lmb_list
  * @return 0 on success, !0 otherwise
  */
-static int
-remove_lmbs(struct options *opts, struct lmb_list_head *lmb_list)
+static int remove_lmbs(struct lmb_list_head *lmb_list)
 {
 	struct dr_node *lmb_head = lmb_list->lmbs;
 	struct dr_node *lmb;
 	int rc;
 
-	while (lmb_list->lmbs_modified < (int)opts->quantity) {
+	while (lmb_list->lmbs_modified < usr_drc_count) {
 		if (drmgr_timed_out())
 			break;
 
-		lmb = get_available_lmb(opts, lmb_head);
+		lmb = get_available_lmb(lmb_head);
 		if (!lmb)
 			return -1;
 
@@ -1176,16 +1280,13 @@ remove_lmbs(struct options *opts, struct lmb_list_head *lmb_list)
 /**
  * mem_remove
  *
- * @param opts
  * @return 0 on success, !0 otherwise
  */
-static int
-mem_remove(struct options *opts)
+static int mem_remove(void)
 {
 	struct lmb_list_head *lmb_list;
 	struct dr_node *lmb;
 	unsigned int removable = 0;
-	unsigned int requested = opts->quantity;
 	int rc = 0;
 
 	lmb_list = get_lmbs(LMB_RANDOM_SORT);
@@ -1213,23 +1314,23 @@ mem_remove(struct options *opts)
 			rc = -1;
 		}
 
-		if (removable < opts->quantity) {
+		if (removable < usr_drc_count) {
 			say(INFO, "Only %u LMBs are currently candidates "
 					"for removal.\n", removable);
-			opts->quantity = removable;
+			usr_drc_count = removable;
 		}
 	}
 
 	if (!rc) {
-		say(DEBUG, "Attempting removal of %d LMBs\n", opts->quantity);
-		rc = remove_lmbs(opts, lmb_list);
+		say(DEBUG, "Attempting removal of %d LMBs\n", usr_drc_count);
+		rc = remove_lmbs(lmb_list);
 	}
 
 	say(ERROR, "Removed %d of %d requested LMB(s)\n",
-	    lmb_list->lmbs_modified, requested);
-	if (lmb_list->lmbs_modified < requested)
+	    lmb_list->lmbs_modified, usr_drc_count);
+	if (lmb_list->lmbs_modified < usr_drc_count)
 		say(ERROR, "Unable to hotplug remove the remaining %d LMB(s)\n",
-		    requested - lmb_list->lmbs_modified);
+		    usr_drc_count - lmb_list->lmbs_modified);
 	report_resource_count(lmb_list->lmbs_modified);
 
 	free_lmbs(lmb_list);
@@ -1256,11 +1357,9 @@ mem_remove(struct options *opts)
  * of the ehea module.  If it is present we check its capabilities file
  * to determine if it can handle memory dlpar.
  *
- * @param action memory add/remove action that is to be checked for
  * @return 1 if we are ehea compatable, 0 otherwise
  */
-static int
-ehea_compatable(int action)
+static int ehea_compatable(void)
 {
 	FILE *fp;
 	uint64_t flags = 0;
@@ -1291,49 +1390,48 @@ ehea_compatable(int action)
 	/* Assume memory dlpar is not supported */
 	rc = 0;
 
-	if ((action == ADD) && (flags & MEM_ADD_ATTR))
+	if ((usr_action == ADD) && (flags & MEM_ADD_ATTR))
 		rc = 1;
 
-	if ((action == REMOVE) && (flags & MEM_RM_ATTR))
+	if ((usr_action == REMOVE) && (flags & MEM_RM_ATTR))
 		rc = 1;
 
 	if (!rc)
 		say(INFO, "The eHEA modules loaded on this system does not "
 		    "support memory DLPAR %s operations.\n",
-		    (action == ADD) ? "add" : "remove");
+		    (usr_action == ADD) ? "add" : "remove");
 	return rc;
 }
 
-int
-valid_mem_options(struct options *opts)
+int valid_mem_options(void)
 {
 	/* default to a quantity of 1 */
-	if (opts->quantity == 0)
-		opts->quantity = 1;
+	if (usr_drc_count == 0)
+		usr_drc_count = 1;
 
-	if ((opts->action != ADD) && (opts->action != REMOVE)) {
+	if ((usr_action != ADD) && (usr_action != REMOVE)) {
 		say(ERROR, "The '-r' or '-a' option must be specified for "
 		    "memory operations\n");
 		return -1;
 	}
 
 	/* The -s option can specify a drc name or drc index */
-	if (opts->usr_drc_name && !strncmp(opts->usr_drc_name, "0x", 2)) {
-		opts->usr_drc_index = strtoul(opts->usr_drc_name, NULL, 16);
-		opts->usr_drc_name = NULL;
+	if (usr_drc_name && !strncmp(usr_drc_name, "0x", 2)) {
+		usr_drc_index = strtoul(usr_drc_name, NULL, 16);
+		usr_drc_name = NULL;
 	}
 
 	return 0;
 }
 
-int do_mem_kernel_dlpar(struct options *opts)
+int do_mem_kernel_dlpar(void)
 {
 	char cmdbuf[128];
 	int rc, offset;
 
 	offset = sprintf(cmdbuf, "%s ", "memory");
 
-	switch (opts->action) {
+	switch (usr_action) {
 	case ADD:
 		offset += sprintf(cmdbuf + offset, "add ");
 		break;
@@ -1345,11 +1443,11 @@ int do_mem_kernel_dlpar(struct options *opts)
 		return -EINVAL;
 	}
 
-	if (opts->usr_drc_index)
+	if (usr_drc_index)
 		offset += sprintf(cmdbuf + offset, "index 0x%x",
-				  opts->usr_drc_index);
+				  usr_drc_index);
 	else
-		offset += sprintf(cmdbuf + offset, "count %d", opts->quantity);
+		offset += sprintf(cmdbuf + offset, "count %d", usr_drc_count);
 
 	rc = do_kernel_dlpar(cmdbuf, offset);
 
@@ -1360,22 +1458,21 @@ int do_mem_kernel_dlpar(struct options *opts)
 	if (rc)
 		report_resource_count(0);
 	else
-		report_resource_count(opts->quantity);
+		report_resource_count(usr_drc_count);
 
 	return rc;
 }
 
-int
-drslot_chrp_mem(struct options *opts)
+int drslot_chrp_mem(void)
 {
 	int rc = -1;
 
-	if (opts->p_option) {
+	if (usr_p_option) {
 		/* This is a entitlement or weight change */
-		return update_sysparm(opts);
+		return update_sysparm();
 	}
 
-	if (! mem_dlpar_capable() || ! ehea_compatable(opts->action)) {
+	if (! mem_dlpar_capable() || ! ehea_compatable()) {
 		say(ERROR, "DLPAR memory operations are not supported on"
 		    "this kernel.");
 		return -1;
@@ -1384,21 +1481,16 @@ drslot_chrp_mem(struct options *opts)
 	/* The recursive nature of the routines that add/remove lmbs
 	 * require that the quantity be non-zero.
 	 */
-	if (opts->usr_drc_name)
-		opts->quantity = 1;
+	if (usr_drc_name)
+		usr_drc_count = 1;
 
 	if (kernel_dlpar_exists()) {
-		rc = do_mem_kernel_dlpar(opts);
+		rc = do_mem_kernel_dlpar();
 	} else {
-		switch (opts->action) {
-		case ADD:
-			rc = mem_add(opts);
-			break;
-
-		case REMOVE:
-			rc = mem_remove(opts);
-			break;
-		}
+		if (usr_action == ADD)
+			rc = mem_add();
+		else if (usr_action == REMOVE)
+			rc = mem_remove();
 	}
 
 	return rc;

@@ -32,6 +32,8 @@
 extern int output_level;
 extern int log_fd;
 
+extern int is_lsslot_cmd;
+
 /* Error Exit Codes */
 #define RC_IN_USE		1
 #define RC_NONEXISTENT 		3
@@ -57,36 +59,41 @@ void * __zalloc(size_t, const char *, int);
 #define DR_COMMAND		"drslot_chrp_%s"
 #define DRMIG_COMMAND		"drmig_chrp_%s"
 
-struct options {
-	int     action;	      /* remove, add, REPLACE, IDENTIFY ...           */
-#define NONE		0
-#define ADD 	     	1
-#define REMOVE       	2
-#define QUERY		3
-#define REPLACE		4
-#define IDENTIFY	5
-#define MIGRATE		6
-#define HIBERNATE	7
+#define MAX(x,y)	(((x) > (y)) ? (x) : (y))
 
-	int     no_ident;     /* used in drslot_chrp_pci                      */
-	int 	timeout;      /* time (in seconds) to try operation           */
-	char   *usr_drc_name; /* pointer to user-specified drc-name
-	                       * of resource                                  */
-	uint32_t	usr_drc_index;
-	int     noprompt;     /* 1 = do not prompt user for input, assume yes */
-	unsigned int quantity;  /* number of resources                        */
-	char	*ctype;
-	char	*p_option;
-	int     pci_virtio;     /* qemu virtio device (legacy guest workaround) */
-	char    *prrn_filename;
-};
+/* Global User Specifications */
+enum drmgr_action {NONE, ADD, REMOVE, QUERY, REPLACE, IDENTIFY,
+		   MIGRATE, HIBERNATE};
+
+enum drc_type {DRC_TYPE_NONE, DRC_TYPE_PCI, DRC_TYPE_SLOT, DRC_TYPE_PHB,
+	       DRC_TYPE_CPU, DRC_TYPE_MEM, DRC_TYPE_PORT,
+	       DRC_TYPE_HIBERNATE, DRC_TYPE_MIGRATION};
+
+extern enum drmgr_action usr_action;
+extern int display_capabilities;
+extern int usr_slot_identification;
+extern int usr_timeout;
+extern char *usr_drc_name;
+extern uint32_t usr_drc_index;
+extern int usr_prompt;
+extern int usr_drc_count;
+extern enum drc_type usr_drc_type;
+extern char *usr_p_option;
+extern int pci_virtio;     /* qemu virtio device (legacy guest workaround) */
+extern char *prrn_filename;
+extern int show_available_slots;
+extern int show_cpus_and_caches;
+extern int show_occupied_slots;
+extern int show_caches;
+extern char *usr_delimiter;
+extern int pci_hotplug_only;
 
 enum say_level { ERROR = 1, WARN, INFO, DEBUG, EXTRA_DEBUG};
 
 /* The follwing are defined in common.c */
 int say(enum say_level, char *, ...);
 void report_unknown_error(char *, int);
-int dr_init(struct options *opts);
+int dr_init(void);
 void dr_fini(void);
 void set_timeout(int);
 int drmgr_timed_out(void);
@@ -109,7 +116,7 @@ int sig_setup(void);
 char *node_type(struct dr_node *);
 
 struct dr_node *alloc_dr_node(struct dr_connector *, int, const char *);
-int update_sysparm(struct options *);
+int update_sysparm(void);
 
 int cpu_dlpar_capable(void);
 int mem_dlpar_capable(void);
@@ -126,32 +133,32 @@ void set_output_level(int);
 
 #define DR_BUF_SZ	256
 
-int drslot_chrp_slot(struct options *);
-int valid_slot_options(struct options *);
+int drslot_chrp_slot(void);
+int valid_slot_options(void);
 void slot_usage(char **);
 
-int drslot_chrp_cpu(struct options *);
-int valid_cpu_options(struct options *);
+int drslot_chrp_cpu(void);
+int valid_cpu_options(void);
 void cpu_usage(char **);
 
-int drslot_chrp_pci(struct options *);
-int valid_pci_options(struct options *);
+int drslot_chrp_pci(void);
+int valid_pci_options(void);
 void pci_usage(char **);
 
-int drslot_chrp_phb(struct options *);
-int valid_phb_options(struct options *);
+int drslot_chrp_phb(void);
+int valid_phb_options(void);
 void phb_usage(char **);
 
-int drslot_chrp_mem(struct options *);
-int valid_mem_options(struct options *);
+int drslot_chrp_mem(void);
+int valid_mem_options(void);
 void mem_usage(char **);
 
-int drslot_chrp_hea(struct options *);
-int valid_hea_options(struct options *);
+int drslot_chrp_hea(void);
+int valid_hea_options(void);
 void hea_usage(char **);
 
-int drmig_chrp_pmig(struct options *);
-int valid_pmig_options(struct options *);
+int drmig_chrp_pmig(void);
+int valid_pmig_options(void);
 void pmig_usage(char **);
 void phib_usage(char **);
 
@@ -159,8 +166,10 @@ int ams_balloon_active(void);
 
 int is_display_adapter(struct dr_node *);
 
+enum drc_type to_drc_type(const char *);
+
 #define PRRN_TIMEOUT 30
-int handle_prrn(char *filename);
+int handle_prrn(void);
 
 int kernel_dlpar_exists(void);
 int do_kernel_dlpar(const char *, int);

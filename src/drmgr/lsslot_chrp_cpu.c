@@ -27,7 +27,6 @@
 #include <sys/types.h>
 #include "dr.h"
 #include "drcpu.h"
-#include "lsslot.h"
 
 /**
  * list_cpus
@@ -45,8 +44,9 @@ list_cpus(struct dr_info *dr_info)
 	printf(fmt_s, "drc-name", "OFDT-node", "drc_index", "thread id(s)");
 
 	for (cpu = dr_info->all_cpus; cpu != NULL; cpu = cpu->next) {
-		if (cpu->is_owned) {
-			printf(fmt, cpu->drc_name, cpu->name, cpu->drc_index);
+		if (cpu->is_owned || output_level >= DEBUG) {
+			printf(fmt, cpu->drc_name, cpu->name ? cpu->name : "--",
+			       cpu->drc_index);
 			for (t = cpu->cpu_threads; t; t = t->sibling)
 				printf(" %x", t->id);
 			printf("\n");
@@ -84,10 +84,10 @@ list_cpus_and_caches(struct dr_info *dr_info)
 {
 	struct dr_node *cpu = NULL;
 	struct thread *t;
-	int thread_id_field_sz = 14;
-	char *fmt_s = "%-11s%-20s%-13s%-13s%-11s%-11s\n";
-	char *fmt = "%-11s%-20s%-12x%";
-	char *fmt_caches = "%-11s%-11s\n";
+	int thread_id_field_sz = 17;
+	char *fmt_s = "%-10s%-18s%-11s%-17s%-15s%-15s\n";
+	char *fmt = "%-10s%-18s%-11x%";
+	char *fmt_caches = "%-15s%-15s\n";
 
 	printf(fmt_s, "drc-name", "OFDT-node", "drc_index", "thread id(s)",
 	       "l2-cache", "l3-cache");
@@ -97,10 +97,11 @@ list_cpus_and_caches(struct dr_info *dr_info)
 		struct cache_info *l2_cache = NULL;
 		struct cache_info *l3_cache = NULL;
 
-		printf(fmt, cpu->drc_name, cpu->name, cpu->drc_index);
+		printf(fmt, cpu->drc_name, cpu->name ? cpu->name : "--",
+		       cpu->drc_index);
 
 		for (t = cpu->cpu_threads; t; t = t->sibling) {
-			printf(" %x", t->id);
+			printf("%x ", t->id);
 			count += 2;
 		}
 
@@ -123,11 +124,9 @@ list_cpus_and_caches(struct dr_info *dr_info)
  * lsslot_chrp_cpu
  * @brief main entry point for lsslot_chrp_cpu command
  *
- * @param opts
  * @returns 0 on success, !0 otherwise
  */
-int
-lsslot_chrp_cpu(struct cmd_opts *opts)
+int lsslot_chrp_cpu(void)
 {
 	struct stat	sb;
 	struct dr_info dr_info;
@@ -150,9 +149,9 @@ lsslot_chrp_cpu(struct cmd_opts *opts)
 		return 1;
 	}
 
-	if (opts->b_flag)
+	if (show_cpus_and_caches)
 		list_cpus_and_caches(&dr_info);
-	else if (opts->p_flag)
+	else if (show_caches)
 		list_caches(&dr_info);
 	else
 		list_cpus(&dr_info);

@@ -47,11 +47,13 @@ struct pmap_struct {
 
 /* drmgr must call ibm,suspend-me and is responsible for postmobility fixups */
 #define MIGRATION_API_V0	0
-/* drmgr must write to sysfs migration store and allow kernel to do postmobility fixups */
+
+/* drmgr must write to sysfs migration store and allow kernel to do
+ * postmobility fixups
+ */
 #define MIGRATION_API_V1	1
 
 static struct pmap_struct *plist;
-static int action = 0;
 static char *pmig_usagestr = "-m -p {check | pre} -s <stream_id>";
 static char *phib_usagestr = "-m -p {check | pre} -s <stream_id> -n <self-arp secs>";
 
@@ -199,11 +201,10 @@ do_update(char *cmd, int len)
 	int i, fd;
 
 	fd = open(OFDTPATH, O_WRONLY);
-	if (fd <= 0) {
+	if (fd == -1) {
 		say(ERROR, "Failed to open %s: %s\n", OFDTPATH,
 		    strerror(errno));
-		rc = errno;
-		return rc;
+		return -1;
 	}
 
 	say(DEBUG, "len %d\n", len);
@@ -304,7 +305,8 @@ update_properties(unsigned int phandle)
 			say(DEBUG, "Null byte = %2.2x, ", *((char *)op));
 			op = (unsigned int *)(((char *)op) + 1);
 			vd = *op++;
-			say(DEBUG, "string length = %u, path = %s\n", vd, ((char *)op));
+			say(DEBUG, "string length = %u, path = %s\n", vd,
+			    ((char *)op));
 			op = (unsigned int *)(((char *)op) + vd);
 			initial = 0;
 
@@ -542,17 +544,16 @@ devtree_update(void)
 	say(DEBUG, "leaving\n");
 }
 
-int
-valid_pmig_options(struct options *opts)
+int valid_pmig_options(void)
 {
-	if (opts->p_option  == NULL) {
+	if (!usr_p_option) {
 		say(ERROR, "A command must be specified\n");
 		return -1;
 	}
 
 	/* Determine if this is a migration or a hibernation request */
-	if (!strcmp(opts->ctype, "pmig")) {
-		if (opts->action != MIGRATE) {
+	if (usr_drc_type == DRC_TYPE_MIGRATION) {
+		if (usr_action != MIGRATE) {
 			/* The -m option must be specified with migrations */
 			say(ERROR, "The -m must be specified for migrations\n");
 			return -1;
@@ -562,18 +563,16 @@ valid_pmig_options(struct options *opts)
 			say(ERROR, "Partition Mobility is not supported.\n");
 			return -1;
 		}
-
-		action = MIGRATE;
-	} else if (!strcmp(opts->ctype, "phib")) {
+	} else if (usr_drc_type == DRC_TYPE_HIBERNATE) {
 		if (!phib_capable()) {
 			say(ERROR, "Partition Hibernation is not supported.\n");
 			return -1;
 		}
 
-		action = HIBERNATE;
+		usr_action = HIBERNATE;
 	} else {
-		say(ERROR, "The value \"%s\" for the -c option is not valid\n",
-		    opts->ctype);
+		say(ERROR, "The value \"%d\" for the -c option is not valid\n",
+		    usr_drc_type);
 		return -1;
 	}
 
@@ -586,12 +585,16 @@ int do_migration(uint64_t stream_val)
 	int api_level = 0;
 	char buf[64];
 
-	/* If the kernel can also do the device tree update we should let the kernel do all the work.
-	   Check if sysfs migration api_version is readable and use api level to determine how to
-	   perform migration and post-mobility updates. */
-	rc = get_int_attribute(SYSFS_MIGRATION_API_FILE, NULL, &api_level, sizeof(&api_level));
+	/* If the kernel can also do the device tree update we should let
+	 * the kernel do all the work. Check if sysfs migration api_version
+	 * is readable and use api level to determine how to perform
+	 * migration and post-mobility updates.
+	 */
+	rc = get_int_attribute(SYSFS_MIGRATION_API_FILE, NULL, &api_level,
+			       sizeof(&api_level));
 	if (rc)
-		say(DEBUG,"get_int_attribute returned %d for path %s\n", rc, SYSFS_MIGRATION_API_FILE);
+		say(DEBUG, "get_int_attribute returned %d for path %s\n",
+		    rc, SYSFS_MIGRATION_API_FILE);
 
 	if (api_level == MIGRATION_API_V0) {
 		say(DEBUG, "about to issue ibm,suspend-me(%llx)\n", stream_val);
@@ -612,15 +615,19 @@ int do_migration(uint64_t stream_val)
 
 		rc = write(fd, buf, strlen(buf));
 		if (rc < 0) {
-			say(DEBUG, "Write to migration file failed with rc: %d\n", rc);
-			rc = errno;
+			int my_errno = errno;
+			say(DEBUG,
+			    "Write to migration file failed with rc: %d\n",
+			    rc);
+			rc = my_errno;
 		} else if (rc > 0)
 			rc = 0;
 
 		close(fd);
 		say(DEBUG, "Kernel migration returned %d\n", rc);
 	} else {
-		say(ERROR, "Unknown kernel migration api version %d\n", api_level);
+		say(ERROR, "Unknown kernel migration api version %d\n",
+		    api_level);
 		rc = -1;
 	}
 
@@ -646,9 +653,10 @@ int do_hibernation(uint64_t stream_val)
 
 	rc = write(fd, buf, strlen(buf));
 	if (rc < 0) {
+		int my_errno = errno;
 		say(DEBUG, "Write to hibernation file failed with rc: %d\n",
 		    rc);
-		rc = errno;
+		rc = my_errno;
 	} else if (rc > 0)
 		rc = 0;
 	close(fd);
@@ -657,13 +665,13 @@ int do_hibernation(uint64_t stream_val)
 	return rc;
 }
 
-void post_mobility_update(int action)
+void post_mobility_update(void)
 {
 	int rc;
 	int do_update = 0;
 	char *path;
 
-	if (action == HIBERNATE)
+	if (usr_action == HIBERNATE)
 		path = SYSFS_HIBERNATION_FILE;
 	else
 		path = SYSFS_MIGRATION_API_FILE;
@@ -672,21 +680,21 @@ void post_mobility_update(int action)
 	   needs to perform a device tree update */
 	rc = get_int_attribute(path, NULL, &do_update, sizeof(do_update));
 	if (rc)
-		say(DEBUG, "get_int_attribute returned %d for path %s\n", rc, path);
+		say(DEBUG, "get_int_attribute returned %d for path %s\n",
+		    rc, path);
 
 	if (!do_update) {
 		rc = rtas_activate_firmware();
 		if (rc)
-			say(DEBUG, "rtas_activate_firmware() returned %d\n", rc);
+			say(DEBUG, "rtas_activate_firmware() returned %d\n",
+			    rc);
 		devtree_update();
 	}
 }
 	
-int
-drmig_chrp_pmig(struct options *opts)
+int drmig_chrp_pmig(void)
 {
 	int rc;
-	char *cmd = opts->p_option;
 	char sys_src[20];
 	uint64_t stream_val;
 
@@ -702,24 +710,24 @@ drmig_chrp_pmig(struct options *opts)
 	 * But if it doesn't, the firmware level doesn't support migration,
 	 * in which case why the heck are we being invoked anyways.
 	 */
-	if (strcmp(cmd, "check") == 0) {
+	if (strcmp(usr_p_option, "check") == 0) {
 		say(DEBUG, "check: Nothing to do...\n");
 		return 0;
 	}
 
 	/* The only other command is pre, any other command is invalid */
-	if (strcmp(cmd, "pre")) {
-		say(DEBUG, "Invalid command \"%s\" specified\n", cmd);
+	if (strcmp(usr_p_option, "pre")) {
+		say(DEBUG, "Invalid command \"%s\" specified\n", usr_p_option);
 		return 1;
 	}
 
-	if (opts->usr_drc_name == NULL) {
+	if (!usr_drc_name) {
 		say(ERROR, "No streamid specified\n");
 		return -1;
 	}
 
 	errno = 0;
-	stream_val = strtoull(opts->usr_drc_name, NULL, 16);
+	stream_val = strtoull(usr_drc_name, NULL, 16);
 	if (errno != 0) {
 		say(ERROR, "Invalid streamid specified: %s\n", strerror(errno));
 		return -1;
@@ -731,9 +739,9 @@ drmig_chrp_pmig(struct options *opts)
 
 	/* Now do the actual migration */
 	do {
-		if (action == MIGRATE)
+		if (usr_action == MIGRATE)
 			rc = do_migration(stream_val);
-		else if (action == HIBERNATE)
+		else if (usr_action == HIBERNATE)
 			rc = do_hibernation(stream_val);
 		else
 			rc = -EINVAL;
@@ -744,11 +752,11 @@ drmig_chrp_pmig(struct options *opts)
 	} while (rc == NOT_SUSPENDABLE);
 
 	syslog(LOG_LOCAL0 | LOG_INFO, "drmgr: %s rc %d\n",
-	       (action == MIGRATE ? "migration" : "hibernation"), rc);
+	       (usr_action == MIGRATE ? "migration" : "hibernation"), rc);
 	if (rc)
 		return rc;
 
-	post_mobility_update(action);
+	post_mobility_update();
 
 	say(DEBUG, "Refreshing RMC via refrsrc\n");
 	rc = system("/usr/sbin/rsct/bin/refrsrc IBM.ManagementServer");
