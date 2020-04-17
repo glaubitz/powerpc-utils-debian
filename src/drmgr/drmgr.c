@@ -29,24 +29,27 @@
 #include "dr.h"
 #include "pseries_platform.h"
 
-#define DRMGR_ARGS	"ac:d:Iimnp:P:Qq:Rrs:w:t:hCV"
+#include "options.c"
+
+#define DRMGR_ARGS	"ac:d:Iimnp:P:Qq:Rrs:w:t:hCVH"
 
 int output_level = 1; /* default to lowest output level */
 
 int log_fd = 0;
 int action_cnt = 0;
 
-static int display_capabilities = 0;
+int is_lsslot_cmd = 0;
+
 static int handle_prrn_event = 0;
 static int display_usage = 0;
 
-typedef int (cmd_func_t)(struct options *);
-typedef int (cmd_args_t)(struct options *);
+typedef int (cmd_func_t)(void);
+typedef int (cmd_args_t)(void);
 typedef void (cmd_usage_t)(char **);
 
-int drmgr(struct options *);
+int drmgr(void);
 void drmgr_usage(char **);
-int valid_drmgr_options(struct options *);
+int valid_drmgr_options(void);
 
 struct command {
 	cmd_func_t	*func;
@@ -139,11 +142,10 @@ drmgr_usage(char **pusage)
 	*pusage = usagestr;
 }
 
-int
-valid_drmgr_options(struct options *opts)
+int valid_drmgr_options(void)
 {
 
-	if (opts->ctype == NULL) {
+	if (usr_drc_type == DRC_TYPE_NONE) {
 		say(ERROR, "A connector type (-c) must be specified\n");
 		return -1;
 	}
@@ -158,27 +160,24 @@ valid_drmgr_options(struct options *opts)
 		return -1;
 	}
 
-	if ((opts->quantity > 1) && (opts->usr_drc_name)) {
+	if ((usr_drc_count > 1) && usr_drc_name) {
 		say(ERROR, "The -q and -s flags are mutually exclusive\n");
 		return -1;
 	}
 
-	if (opts->timeout < 0) {
-		say(ERROR, "Invalid timeout specified: %s\n", optarg);
+	if (usr_timeout < 0) {
+		say(ERROR, "Invalid timeout specified: %s\n", usr_timeout);
 		return -1;
 	}
 
 	return 0;
 }
 
-int
-parse_options(int argc, char *argv[], struct options *opts)
+int parse_options(int argc, char *argv[])
 {
 	int c;
 	int option_indx;
 	int option_found = 0;
-
-	memset(opts, 0, sizeof(*opts));
 
 	/* disable getopt error messages */
 	opterr = 0;
@@ -189,11 +188,11 @@ parse_options(int argc, char *argv[], struct options *opts)
 
 		switch (c) {
 		    case 'a':
-			opts->action = ADD;
+			usr_action = ADD;
 			action_cnt++;
 			break;
 		    case 'c':
-			opts->ctype = optarg;
+			usr_drc_type = to_drc_type(optarg);
 			break;
 		    case 'C':
 			display_capabilities = 1;
@@ -202,10 +201,10 @@ parse_options(int argc, char *argv[], struct options *opts)
 			set_output_level(atoi(optarg));
 			break;
 		    case 'I':
-			opts->no_ident = 1;
+			usr_slot_identification = 0;
 			break;
 		    case 'i':
-			opts->action = IDENTIFY;
+			usr_action = IDENTIFY;
 			action_cnt++;
 			break;
 		    case 'n':
@@ -213,48 +212,51 @@ parse_options(int argc, char *argv[], struct options *opts)
 			   * seconds to attempt a self-arp.  Linux ignores this
 			   * for hibernation.
 			   */
-			opts->noprompt = 1;
+			usr_prompt = 0;
 			break;
 		    case 'p':
-			opts->p_option = optarg;
+			usr_p_option = optarg;
 			break;
 		    case 'P':
-			opts->prrn_filename = optarg;
+			prrn_filename = optarg;
 			handle_prrn_event = 1;
 			break;
 		    case 'q':
-			opts->quantity = strtoul(optarg, NULL, 0);
+			usr_drc_count = strtoul(optarg, NULL, 0);
 			break;
 		    case 'R':
-			opts->action = REPLACE;
+			usr_action = REPLACE;
 			action_cnt++;
 			break;
 		    case 'r':
-			opts->action = REMOVE;
+			usr_action = REMOVE;
 			action_cnt++;
 			break;
 		    case 's':
-			opts->usr_drc_name = optarg;
+			usr_drc_name = optarg;
 			break;
 		    case 'Q':
-			opts->action = QUERY;
+			usr_action = QUERY;
 			action_cnt++;
 			break;
 		    case 'm':
-			opts->action = MIGRATE;
+			usr_action = MIGRATE;
 			action_cnt++;
 			break;
 		    case 'w':
-			opts->timeout = strtol(optarg, NULL, 10) * 60;
+			usr_timeout = strtol(optarg, NULL, 10) * 60;
 			break;
 		    case 'h':
 		    	display_usage = 1;
 		    	return 0;
 		    	break;
+		    case 'H':
+			pci_hotplug_only = 1;
+			break;
 		    case 't': /* target lpid (pmig, not used) */
 			break;
 		    case 'V': /* qemu virtio pci device (workaround) */
-                        opts->pci_virtio = 1;
+                        pci_virtio = 1;
                         break;
 
 		    default:
@@ -270,60 +272,63 @@ parse_options(int argc, char *argv[], struct options *opts)
 	return 0;
 }
 
-struct command *
-get_command(struct options *opts)
+struct command *get_command(void)
 {
 	/* Unfortunately, the connector type specified doesn't always result
 	 * in a 1-to-1 relationship with the resulting command to run so we
 	 * have to do some extra checking to build the correct command.
 	 */
-	if (opts->action == MIGRATE)
+	if (usr_action == MIGRATE)
 		return &commands[DRMIG_CHRP_PMIG];
 
-	if (!opts->ctype)
-		return &commands[DRMGR];
-
-	if ((! strncmp(opts->ctype, "port", 4)) ||
-	    ((opts->usr_drc_name) && (! strncmp(opts->usr_drc_name, "HEA", 3))))
+	if (usr_drc_name && !strncmp(usr_drc_name, "HEA", 3))
 		return &commands[DRSLOT_CHRP_HEA];
 	
-	if (! strcmp(opts->ctype, "slot"))
-		return &commands[DRSLOT_CHRP_SLOT];
-			
-	if (! strcmp(opts->ctype, "phb"))
+	switch (usr_drc_type) {
+	case DRC_TYPE_NONE:
+		return &commands[DRMGR];
+		break;
+	case DRC_TYPE_PORT:
+ 		return &commands[DRSLOT_CHRP_HEA];
+		break;
+	case DRC_TYPE_SLOT:
+ 		return &commands[DRSLOT_CHRP_SLOT];
+		break;
+	case DRC_TYPE_PHB:
 		return &commands[DRSLOT_CHRP_PHB];
-			
-	if (! strcmp(opts->ctype, "pci"))
-		return &commands[DRSLOT_CHRP_PCI];
-			
-	if (! strcmp(opts->ctype, "mem"))
-		return &commands[DRSLOT_CHRP_MEM];
-			
-	if (! strcmp(opts->ctype, "cpu"))
-		return &commands[DRSLOT_CHRP_CPU];
-
-	if (! strcmp(opts->ctype, "phib")) {
-		opts->action = HIBERNATE;
-		return &commands[DRSLOT_CHRP_PHIB];
+		break;
+	case DRC_TYPE_PCI:
+ 		return &commands[DRSLOT_CHRP_PCI];
+		break;
+	case DRC_TYPE_MEM:
+ 		return &commands[DRSLOT_CHRP_MEM];
+		break;
+	case DRC_TYPE_CPU:
+ 		return &commands[DRSLOT_CHRP_CPU];
+		break;
+	case DRC_TYPE_HIBERNATE:
+ 		usr_action = HIBERNATE;
+ 		return &commands[DRSLOT_CHRP_PHIB];
+		break;
+	default:
+		/* If we make it this far, the user specified an invalid
+		 * connector type.
+		 */
+		say(ERROR, "Dynamic reconfiguration is not supported for "
+		    "connector\ntype \"%s\" on this system\n", usr_drc_type);
+		break;
 	}
-			
-	/* If we make it this far, the user specified an invalid
-	 * connector type.
-	 */
-	say(ERROR, "Dynamic reconfiguration is not supported for connector\n"
-	    "type \"%s\" on this system\n", opts->ctype);
 
 	return &commands[DRMGR];
 }
 
-int drmgr(struct options *opts) {
-	say(ERROR, "Invalid command: %d\n", opts->action);
+int drmgr(void) {
+	say(ERROR, "Invalid command: %d\n", usr_action);
 	return -1;
 }
 
 int main(int argc, char *argv[])
 {
-	struct options opts;
 	char log_msg[DR_PATH_MAX];
 	struct command *command;
 	int i, rc, offset;
@@ -336,13 +341,13 @@ int main(int argc, char *argv[])
 	   exit(1);
 	}
 
-	parse_options(argc, argv, &opts);
+	parse_options(argc, argv);
 
-	rc = dr_init(&opts);
+	rc = dr_init();
 	if (rc) {
 		if (handle_prrn_event) {
 			say(ERROR, "Failed to handle PRRN event\n");
-			unlink(opts.prrn_filename);
+			unlink(prrn_filename);
 		}
 		return rc;
 	}
@@ -354,15 +359,15 @@ int main(int argc, char *argv[])
 	}
 
 	if (handle_prrn_event) {
-		rc = handle_prrn(opts.prrn_filename);
+		rc = handle_prrn();
 		if (rc)
 			say(ERROR, "Failed to handle PRRN event\n");
-		unlink(opts.prrn_filename);
+		unlink(prrn_filename);
 		dr_fini();
 		return rc;
 	}
 
-	command = get_command(&opts);
+	command = get_command();
 
 	if (display_usage) {
 		command_usage(command);
@@ -371,7 +376,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* Validate the options for the action we want to perform */
-	rc = command->validate_options(&opts);
+	rc = command->validate_options();
 	if (rc) {
 		dr_fini();
 		return -1;
@@ -383,7 +388,7 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	set_timeout(opts.timeout);
+	set_timeout(usr_timeout);
 
 	/* Log this invocation to /var/log/messages and /var/log/drmgr */
 	offset = sprintf(log_msg, "drmgr: ");
@@ -395,7 +400,7 @@ int main(int argc, char *argv[])
 	say(DEBUG, "%s\n", log_msg);
 
 	/* Now, using the actual command, call out to the proper handler */
-	rc = command->func(&opts);
+	rc = command->func();
 
 	dr_fini();
 	return rc;

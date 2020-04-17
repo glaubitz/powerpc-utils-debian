@@ -9,6 +9,7 @@ License:	GNU General Public License (GPL)
 Group:		System Environment
 Source:		powerpc-utils-%{version}.tar.gz
 BuildRoot:	/tmp/%{name}-buildroot/
+Vendor:         IBM Corp.
 Requires:	/bin/bash, /bin/sh, /bin/sed, /usr/bin/perl, librtas >= 1.4.0, zlib
 Requires:	bc
 Requires:	coreutils
@@ -55,6 +56,7 @@ Utilities for maintaining and servicing PowerPC systems.
 /usr/sbin/lsslot
 /usr/sbin/lsprop
 /usr/sbin/nvram
+/usr/sbin/nvsetenv
 /usr/sbin/snap
 /usr/sbin/bootlist
 /usr/sbin/ofpathname

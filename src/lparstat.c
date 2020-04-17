@@ -23,6 +23,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <getopt.h>
 #include <unistd.h>
@@ -34,6 +35,8 @@
 #define LPARCFG_FILE	"/proc/ppc64/lparcfg"
 #define SE_NOT_FOUND	"???"
 #define SE_NOT_VALID	"-"
+
+static bool o_legacy = false;
 
 struct sysentry *get_sysentry(char *name)
 {
@@ -123,24 +126,60 @@ int get_time_base()
 	return 0;
 }
 
+void get_sys_uptime(struct sysentry *unused_se, char *uptime)
+{
+	FILE *f;
+	char buf[80];
+
+	f = fopen("/proc/uptime", "r");
+	if (!f) {
+		fprintf(stderr, "Could not open /proc/uptime\n");
+		sprintf(uptime, SE_NOT_VALID);
+		return;
+	}
+
+	if ((fgets(buf, 80, f)) != NULL) {
+		char *value;
+
+		value = strchr(buf, ' ');
+		*value = '\0';
+		sprintf(uptime, "%s", buf);
+	} else {
+		sprintf(uptime, SE_NOT_VALID);
+	}
+
+	fclose(f);
+}
+
+
 void get_cpu_physc(struct sysentry *unused_se, char *buf)
 {
 	struct sysentry *se;
 	float elapsed;
 	float new_purr, old_purr;
 	float timebase, physc;
-
-	elapsed = elapsed_time() / 1000000.0;
-
-	se = get_sysentry("timebase");
-	timebase = atoi(se->value);
+	float new_tb, old_tb;
 
 	se = get_sysentry("purr");
 	new_purr = strtoll(se->value, NULL, 0);
 	old_purr = strtoll(se->old_value, NULL, 0);
 
-	physc = (new_purr - old_purr)/timebase/elapsed;
-	sprintf(buf, "%.6f", physc);
+	se = get_sysentry("tbr");
+	if (se->value[0] != '\0') {
+		new_tb = strtoll(se->value, NULL, 0);
+		old_tb = strtoll(se->old_value, NULL, 0);
+
+		physc = (new_purr - old_purr) / (new_tb - old_tb);
+	} else {
+		elapsed = elapsed_time() / 1000000.0;
+
+		se = get_sysentry("timebase");
+		timebase = atoi(se->value);
+
+		physc = (new_purr - old_purr)/timebase/elapsed;
+	}
+
+	sprintf(buf, "%.2f", physc);
 }
 
 void get_per_entc(struct sysentry *unused_se, char *buf)
@@ -152,7 +191,45 @@ void get_per_entc(struct sysentry *unused_se, char *buf)
 	get_sysdata("DesEntCap", &descr, entc);
 	get_sysdata("physc", &descr, physc);
 
-	sprintf(buf, "%.6f", atof(physc) / atof(entc) * 100.0);
+	sprintf(buf, "%.2f", atof(physc) / atof(entc) * 100.0);
+}
+
+void get_cpu_app(struct sysentry *unused_se, char *buf)
+{
+	struct sysentry *se;
+	float timebase, app, elapsed_time;
+	long long new_app, old_app, newtime, oldtime;
+	char *descr, uptime[32];
+
+	se = get_sysentry("time");
+	if (se->old_value[0] == '\0') {
+		/* Single report since boot */
+		get_sysdata("uptime", &descr, uptime);
+
+		if (!strcmp(uptime, SE_NOT_VALID)) {
+			sprintf(buf, "-");
+			return;
+		}
+		elapsed_time = atof(uptime);
+	} else {
+		newtime = strtoll(se->value, NULL, 0);
+		oldtime = strtoll(se->old_value, NULL, 0);
+		elapsed_time = (newtime - oldtime) / 1000000.0;
+	}
+
+	se = get_sysentry("timebase");
+	timebase = atof(se->value);
+
+	se = get_sysentry("pool_idle_time");
+	new_app = strtoll(se->value, NULL, 0);
+	if (se->old_value[0] == '\0') {
+		old_app = 0;
+	} else {
+		old_app = strtoll(se->old_value, NULL, 0);
+	}
+
+	app = (new_app - old_app)/timebase/elapsed_time;
+	sprintf(buf, "%.2f", app);
 }
 
 int parse_lparcfg()
@@ -203,10 +280,12 @@ int parse_lparcfg()
 int parse_proc_ints()
 {
 	FILE *f;
-	char line[512];
+	char *line;
+	size_t n = 0;
 	char *value;
 	struct sysentry *se;
 	long long int phint = 0;
+	const char *delim = " ";
 
 	f = fopen("/proc/interrupts", "r");
 	if (!f) {
@@ -214,18 +293,27 @@ int parse_proc_ints()
 		return -1;
 	}
 
-	while (fgets(line, 512, f) != NULL) {
+	while (getline(&line, &n, f) != -1) {
 		/* we just need the SPU line */
-		if (line[0] != 'S' || line[1] != 'P' || line[2] != 'U')
+		if (!strstr(line, "SPU:"))
 			continue;
 
-		for (value = &line[5]; value[2] != 'S'; value += 11) {
+		/* target line. omit the 'SPU:' */
+		value = strtok(line, delim);
+		if (!value)
+			break;
+
+		while ((value = strtok(NULL, delim)) && value[0] != 'S') {
 			int v;
 			v = atoi(value);
 			phint += v;
 		}
+
+		/* skim the rest of the lines */
+		break;
 	}
 
+	free(line);
 	fclose(f);
 
 	se = get_sysentry("phint");
@@ -264,11 +352,11 @@ int parse_proc_stat()
 	statvals[0] = 0;
 	value = line;
 	for (i = 1; i <= (entries - 1); i++) {
-		int v;
+		long long v;
 		value = strchr(value, ' ') + 1;
 		if (i == 1)
 			value++;
-		v = atoi(value);
+		v = atoll(value);
 		statvals[i] = v;
 		statvals[0] += v;
 	}
@@ -394,7 +482,7 @@ void get_mem_total(struct sysentry *se, char *buf)
 {
 	FILE *f;
 	char line[128];
-	char *mem, *nl, *first_line;
+	char *mem, *nl, *first_line, *unit;
 
 	f = fopen("/proc/meminfo", "r");
 	if (!f) {
@@ -415,10 +503,21 @@ void get_mem_total(struct sysentry *se, char *buf)
 		mem++;
 	} while (*mem == ' ');
 
-	nl = strchr(mem, '\n');
+	unit = strchr(mem, ' ');
+	*unit = '\0';
+
+	do {
+		unit++;
+	} while (*unit == ' ');
+
+	nl = strchr(unit, '\n');
 	*nl = '\0';
 
-	sprintf(buf, "%s", mem);
+	if (o_legacy) {
+		sprintf(buf, "%d %s", atoi(mem) / 1024, "MB");
+	} else {
+		sprintf(buf, "%s %s", mem, unit);
+	}
 }
 
 void get_smt_mode(struct sysentry *se, char *buf)
@@ -465,13 +564,13 @@ long long get_cpu_time_diff()
 
 void get_cpu_stat(struct sysentry *se, char *buf)
 {
-	float total, percent;
-	float old_val, new_val;
+	float percent;
+	long long total, old_val, new_val;
 
 	total = get_cpu_time_diff();
-	new_val = atoi(se->value);
-	old_val = atoi(se->old_value);
-	percent = (float)((new_val - old_val)/total) * 100;
+	new_val = atoll(se->value);
+	old_val = atoll(se->old_value);
+	percent = ((new_val - old_val)/(long double)total) * 100;
 	sprintf(buf, "%.2f", percent);
 }
 
@@ -516,36 +615,51 @@ int print_iflag_data()
 
 void print_default_output(int interval, int count)
 {
-	char *fmt = "%5s %5s %5s %8s %8s %5s %5s %5s %5s\n";
+	char *fmt = "%5s %5s %5s %8s %8s %5s %5s %5s %5s %5s\n";
 	char *descr;
 	char buf[128];
-	int offset;
+	int offset, smt, active_proc;
+	char type[32];
 	char value[32];
 	char user[32], sys[32], wait[32], idle[32], physc[32], entc[32];
-	char lbusy[32], vcsw[32], phint[32];
+	char lbusy[32], app[32], vcsw[32], phint[32];
 
 	memset(buf, 0, 128);
 	get_sysdata("shared_processor_mode", &descr, value);
 	offset = sprintf(buf, "type=%s ", value);
+	sprintf(type, "%s", value);
 	get_sysdata("capped", &descr, value);
 	offset += sprintf(buf + offset, "mode=%s ", value);
 	get_sysdata("smt_state", &descr, value);
 	offset += sprintf(buf + offset, "smt=%s ", value);
+	if (!strcmp(value, "Off"))
+		smt = 1;
+	else
+		smt = atoi(value);
 	get_sysdata("partition_active_processors", &descr, value);
-	offset += sprintf(buf + offset, "lcpu=%s ", value);
+	active_proc = atoi(value);
+	if (o_legacy)
+		offset += sprintf(buf + offset, "lcpu=%d ", active_proc*smt);
+	else
+		offset += sprintf(buf + offset, "lcpu=%s ", value);
 	get_sysdata("MemTotal", &descr, value);
 	offset += sprintf(buf + offset, "mem=%s ", value);
 	get_sysdata("active_cpus_in_pool", &descr, value);
-	offset += sprintf(buf + offset, "cpus=%s ", value);
+	if (o_legacy) {
+		if (strcmp(type, "Dedicated"))
+			offset += sprintf(buf + offset, "psize=%s ", value);
+	} else {
+		offset += sprintf(buf + offset, "cpus=%s ", value);
+	}
 	get_sysdata("DesEntCap", &descr, value);
 	offset += sprintf(buf + offset, "ent=%s ", value);
 
 	fprintf(stdout, "\nSystem Configuration\n%s\n\n", buf);
 
 	fprintf(stdout, fmt, "\%user", "\%sys", "\%wait", "\%idle", "physc",
-		"\%entc", "lbusy", "vcsw", "phint");
+		"\%entc", "lbusy", "app", "vcsw", "phint");
 	fprintf(stdout, fmt, "-----", "-----", "-----", "-----", "-----",
-		"-----", "-----", "-----", "-----");
+		"-----", "-----", "-----", "-----", "-----");
 
 	do {
 		if (interval) {
@@ -562,17 +676,37 @@ void print_default_output(int interval, int count)
 		get_sysdata("physc", &descr, physc);
 		get_sysdata("per_entc", &descr, entc);
 		get_sysdata("phint", &descr, phint);
+		get_sysdata("app", &descr, app);
 
 		fprintf(stdout, fmt, user, sys, wait, idle, physc, entc,
-			lbusy, vcsw, phint);
+			lbusy, app, vcsw, phint);
 		fflush(stdout);
 	} while (--count > 0);
 }
 
+static void usage(void)
+{
+	printf("Usage:  lparstat [ options ]\n\tlparstat <interval> [ count ]\n\n"
+	       "options:\n"
+	       "\t-h, --help		Show this message and exit.\n"
+	       "\t-V, --version	\tDisplay lparstat version information.\n"
+	       "\t-i			Lists details on the LPAR configuration.\n"
+	       "\t-l, --legacy		Print the report in legacy format.\n"
+	       "interval		The interval parameter specifies the amount of time between each report.\n"
+	       "count			The count parameter specifies how many reports will be displayed.\n");
+}
+
+static struct option long_opts[] = {
+	{"version",	no_argument,	NULL,	'V'},
+	{"help",	no_argument,	NULL,	'h'},
+	{"legacy",	no_argument,	NULL,	'l'},
+	{0, 0, 0, 0},
+};
+
 int main(int argc, char *argv[])
 {
 	int interval = 0, count = 0;
-	int c;
+	int c, opt_index = 0;
 	int i_option = 0;
 
 	if (get_platform() != PLATFORM_PSERIES_LPAR) {
@@ -581,12 +715,24 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	while ((c = getopt(argc, argv, "i")) != -1) {
+	while ((c = getopt_long(argc, argv, "iVhl",
+				long_opts, &opt_index)) != -1) {
 		switch(c) {
 			case 'i':
 				i_option = 1;
 				break;
+			case 'l':
+				o_legacy = true;
+				break;
+			case 'V':
+				printf("lparstat - %s\n", VERSION);
+				return 0;
+			case 'h':
+				usage();
+				return 0;
 			case '?':
+				usage();
+				return 1;
 			default:
 				break;
 		}

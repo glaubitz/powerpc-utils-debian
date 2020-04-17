@@ -56,6 +56,7 @@ sysfs_write(char *fname, char *name)
 {
 	int rc, len;
 	FILE *file;
+	int my_errno;
 
     	file = fopen(fname, "w");
     	if (file == NULL) {
@@ -65,11 +66,13 @@ sysfs_write(char *fname, char *name)
 
 	len = strlen(name);
     	rc = fwrite(name, 1, len, file);
+	my_errno = errno;
 	fclose(file);
 
 	rc = (rc >= 0) ? 0 : rc;
 	if (rc)
-		say(ERROR, "Write to %s failed:\n%s\n", fname, strerror(errno));
+		say(ERROR, "Write to %s failed:\n%s\n", fname,
+		    strerror(my_errno));
 
 	return rc;
 }
@@ -145,11 +148,9 @@ hotplug_port(int action, struct dr_node *hea, struct dr_node *port)
  * remove_port
  * @brief Remove the HEA adapater or port specified by the options
  *
- * @param opts command options
  * @returns 0 on success, !0 otherwise
  */
-static int
-remove_port(struct options *opts)
+static int remove_port(void)
 {
 	struct dr_node *hea;
 	struct dr_node *port, *tmp;
@@ -157,18 +158,18 @@ remove_port(struct options *opts)
 	int no_ports = 0;
 	int hea_hp_removed = 0;
 
-	hea = get_node_by_name(opts->usr_drc_name, HEA_NODES);
+	hea = get_node_by_name(usr_drc_name, HEA_NODES);
 	if (hea == NULL)
 		return RC_NONEXISTENT;
 
 	for (port = hea->children; port; port = port->next) {
-		if (! strcmp(port->drc_name, opts->usr_drc_name))
+		if (! strcmp(port->drc_name, usr_drc_name))
 			break;
 	}
 
 	if (!port) {
 		say(ERROR, "Could not find HEA Port \"%s\" to remove\n",
-		    opts->usr_drc_name);
+		    usr_drc_name);
 		free_node(hea);
 		return -1;
 	}
@@ -225,16 +226,14 @@ remove_port(struct options *opts)
  * remove_hea
  * @brief Remove the HEA adapater or port specified by the options
  *
- * @param opts command options
  * @returns 0 on success, !0 otherwise
  */
-static int
-remove_hea(struct options *opts)
+static int remove_hea(void)
 {
 	struct dr_node *hea;
 	int rc;
 
-	hea = get_node_by_name(opts->usr_drc_name, HEA_NODES);
+	hea = get_node_by_name(usr_drc_name, HEA_NODES);
 	if (hea == NULL)
 		return RC_NONEXISTENT;
 
@@ -256,21 +255,19 @@ remove_hea(struct options *opts)
  * add_slot
  * @bried Add the HEA adapter or port specified by the options
  *
- * @param opts command options
  * @returns 0 on success, !0 otherwise
  */
-static int
-add_slot(struct options *opts)
+static int add_slot(void)
 {
 	struct dr_connector drc;
 	struct of_node *of_nodes;
 	struct dr_node *hea;
 	struct dr_node *port;
 	char ofdt_path[DR_PATH_MAX];
-	char *slot_type = (opts->usr_drc_name[0] == 'H') ? "HEA" : "Port";
+	char *slot_type = (usr_drc_name[0] == 'H') ? "HEA" : "Port";
 	int rc = 0;
 
-	rc = get_drc_by_name(opts->usr_drc_name, &drc, ofdt_path, OFDT_BASE);
+	rc = get_drc_by_name(usr_drc_name, &drc, ofdt_path, OFDT_BASE);
 	if (rc)
 		return rc;
 
@@ -292,10 +289,10 @@ add_slot(struct options *opts)
 		return rc;
 	}
 
-	hea = get_node_by_name(opts->usr_drc_name, HEA_NODES);
+	hea = get_node_by_name(usr_drc_name, HEA_NODES);
 	if (hea == NULL) {
 		say(ERROR, "Could not get find \"%s\" in the updated device "
-		    "tree,\nAddition of %s failed.\n", opts->usr_drc_name,
+		    "tree,\nAddition of %s failed.\n", usr_drc_name,
 		    slot_type);
 
 		remove_device_tree_nodes(ofdt_path);
@@ -303,13 +300,13 @@ add_slot(struct options *opts)
 		return -1;
 	}
 
-	switch (opts->usr_drc_name[0]) {
+	switch (usr_drc_name[0]) {
 	    case 'H':
 		rc = hotplug_hea(ADD, strstr(hea->ofdt_path, "/lhea"));
 		break;
 	    case 'P':
 		for (port = hea->children; port; port = port->next) {
-			if (! strcmp(opts->usr_drc_name, port->drc_name))
+			if (! strcmp(usr_drc_name, port->drc_name))
 				break;
 		}
 
@@ -325,16 +322,15 @@ add_slot(struct options *opts)
 	return rc;
 }
 
-int
-valid_hea_options(struct options *opts)
+int valid_hea_options(void)
 {
-	if (opts->usr_drc_name == NULL) {
+	if (!usr_drc_name) {
 		say(ERROR, "A drc name  must be specified\n");
 		return -1;
 	}
 
-	if ((opts->action != ADD) && (opts->action != REMOVE)
-	    && (opts->action != QUERY)) {
+	if ((usr_action != ADD) && (usr_action != REMOVE)
+	    && (usr_action != QUERY)) {
 		say(ERROR, "The '-r', '-a', or '-Q' option must be specified "
 		    "for HEA operations.\n");
 		return -1;
@@ -343,8 +339,7 @@ valid_hea_options(struct options *opts)
 	return 0;
 }
 
-int
-drslot_chrp_hea(struct options *opts)
+int drslot_chrp_hea(void)
 {
 	int rc;
 
@@ -354,19 +349,19 @@ drslot_chrp_hea(struct options *opts)
 		return -1;
 	}
 
-	switch (opts->action) {
+	switch (usr_action) {
 	    case ADD:
-		rc = add_slot(opts);
+		rc = add_slot();
 		break;
 
 	    case REMOVE:
-		if (! strcmp(opts->ctype, "port"))
-			rc = remove_port(opts);
-		else if (! strcmp(opts->ctype, "slot"))
-			rc = remove_hea(opts);
+		if (usr_drc_type == DRC_TYPE_PORT)
+			rc = remove_port();
+		else if (usr_drc_type == DRC_TYPE_SLOT)
+			rc = remove_hea();
 		else {
-			say(ERROR, "The connector type %s is not supported.\n",
-			    opts->ctype);
+			say(ERROR, "The connector type %d is not supported.\n",
+			    usr_drc_type);
 			rc = -1;
 		}
 		break;
@@ -374,10 +369,10 @@ drslot_chrp_hea(struct options *opts)
 	    case QUERY:
 		{
 			struct dr_node *node;
-			node = get_node_by_name(opts->usr_drc_name, HEA_NODES);
+			node = get_node_by_name(usr_drc_name, HEA_NODES);
 			if (node == NULL) {
 				say(ERROR, "%s not owned by partition\n",
-				    opts->usr_drc_name);
+				    usr_drc_name);
 				rc = RC_DONT_OWN;
 			} else {
 				/* Special case for HMC */

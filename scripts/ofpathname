@@ -84,20 +84,20 @@ err()
     fi
 
     case $emsg in
-        1)  echo "$OFPATHNAME: Could not retrieve Open Firmware device path"
-            echo "            for logical device \"$DEVNAME_ARG\"." ;;
+        1)  echo "$OFPATHNAME: Could not retrieve Open Firmware device path" 1>&2
+            echo "            for logical device \"$DEVNAME_ARG\"." 1>&2 ;;
 
-        2)  echo "$OFPATHNAME: sysfs (/sys) is needed and does not appear"
-            echo "            to be mounted on this system." ;;
+        2)  echo "$OFPATHNAME: sysfs (/sys) is needed and does not appear" 1>&2
+            echo "            to be mounted on this system." 1>&2 ;;
 
-        3)  echo "$OFPATHNAME: Could not find sysfs information for logical"
-            echo "            device \"$DEVNAME_ARG\"." ;;
+        3)  echo "$OFPATHNAME: Could not find sysfs information for logical" 1>&2
+            echo "            device \"$DEVNAME_ARG\"." 1>&2 ;;
 
-        4)  echo "$OFPATHANME: Logical device \"$DEVNAME_ARG\" does not appear"
-            echo "            to be configured." ;;
+        4)  echo "$OFPATHANME: Logical device \"$DEVNAME_ARG\" does not appear" 1>&2
+            echo "            to be configured." 1>&2 ;;
 
-        5)  echo "$OFPATHNAME: Could not retrieve logical device name for"
-            echo "            Open Firmware path \"$DEVNAME_ARG\"."
+        5)  echo "$OFPATHNAME: Could not retrieve logical device name for" 1>&2
+            echo "            Open Firmware path \"$DEVNAME_ARG\"." 1>&2 ;;
     esac
 
     exit 1
@@ -409,7 +409,11 @@ print_aliases()
 get_slave()
 {
 	cd /sys/class/*/$1
-	while [[ -n "`ls slaves 2> /dev/null`" ]]; do cd slaves/*; done
+
+	while [[ -n "`ls slaves 2> /dev/null`" ]]; do
+		cd `echo slaves/* | head -n1 | cut -d " " -f1`;
+	done
+
 	$FIND /dev -name "`basename $PWD`"
 }
 
@@ -809,7 +813,7 @@ l2of_scsi()
     fc=${fc##/*/}
 
     if [[ -e /proc/device-tree$OF_PATH/device_type ]]; then
-        devtype=`$CAT /proc/device-tree$OF_PATH/device_type`;
+        devtype=`tr -d '\0' < /proc/device-tree$OF_PATH/device_type`;
         if [[ $devtype = "fcp" || $devtype = "scsi-fcp" ]]; then
                 fc="fibre-channel";
         fi
@@ -861,8 +865,7 @@ l2of_scsi()
                 OF_PATH=$(printf "%s/disk@%s,%s" $OF_PATH $wwpn $vfc_lun)
         else
                 local i vdiskno
-                cd host*
-                cd target*
+		goto_dir $device_path $device_dir
                 vdiskno=`get_vdisk_no $device_dir`
 
                 OF_PATH=$OF_PATH/disk\@$vdiskno
@@ -1027,6 +1030,7 @@ ofpathname_to_logical()
                              of2l_ide
                           fi ;;
         eth* | l-lan  )  of2l_ethernet ;;
+	vnic          )  of2l_ethernet ;;
         hfi-ethernet* )  of2l_hfi ;;
         disk*         )  of2l_ide ;;
         usb           )  of2l_usb ;;
@@ -1490,8 +1494,10 @@ of2l_vfc()
 	local wwpn=`get_fc_wwpn "$link/../../fc_remote_ports*"`
 
         if [[ $vfc_lun = $OF_LUN && $wwpn = $OF_WWPN ]]; then
+            if [[ $OF_PATH = $DEVPATH ]]; then
             LOGICAL_DEVNAME="${dir##*/}"
             return
+            fi
         fi
     done
 }
@@ -1625,7 +1631,7 @@ of2l_nvme()
 #
 . $PSERIES_PLATFORM
 if [[ $platform = $PLATFORM_POWERNV ]]; then
-	echo "$OFPATHNAME: is not supported on the $platform_name platform"
+	echo "$OFPATHNAME: is not supported on the $platform_name platform" 1>&2
 	exit 1
 fi
 

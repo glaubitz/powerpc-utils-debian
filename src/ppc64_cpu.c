@@ -35,6 +35,7 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
+#include <sys/param.h>
 
 #ifdef WITH_LIBRTAS
 #include <librtas.h>
@@ -64,7 +65,7 @@ struct cpu_freq {
 	int offline;
 	int counter;
 	pthread_t tid;
-	unsigned long long freq;
+	double freq;
 };
 
 #ifndef __NR_perf_event_open
@@ -162,6 +163,11 @@ static int cpu_online(int thread)
 
 	sprintf(path, SYSFS_CPUDIR"/online", thread);
 	rc = get_attribute(path, "%d", &online);
+
+	/* This attribute does not exist in kernels without hotplug enabled */
+	if (rc && errno == ENOENT)
+		return 1;
+
 	if (rc || !online)
 		return 0;
 
@@ -381,23 +387,10 @@ static int is_smt_capable(void)
 	return 0;
 }
 
-static int get_one_smt_state(int primary_thread)
+static int get_one_smt_state(int core)
 {
-	int thread_state;
+	int primary_thread = core * threads_per_cpu;
 	int smt_state = 0;
-	int i;
-
-	for (i = 0; i < threads_per_cpu; i++) {
-		thread_state = cpu_online(primary_thread + i);
-		smt_state += thread_state;
-	}
-
-	return smt_state ? smt_state : -1;
-}
-
-static int get_smt_state(void)
-{
-	int system_state = -1;
 	int i;
 
 	if (!sysattr_is_readable("online")) {
@@ -405,20 +398,32 @@ static int get_smt_state(void)
 		return -2;
 	}
 
-	for (i = 0; i < threads_in_system; i += threads_per_cpu) {
-		int cpu_state;
-
-		cpu_state = get_one_smt_state(i);
-		if (cpu_state == -1)
-			continue;
-
-		if (system_state == -1)
-			system_state = cpu_state;
-		else if (system_state != cpu_state)
-			return -1;
+	for (i = 0; i < threads_per_cpu; i++) {
+		smt_state += cpu_online(primary_thread + i);
 	}
 
-	return system_state;
+	return smt_state;
+}
+
+static int get_smt_state(void)
+{
+	int smt_state = -1;
+	int i;
+
+	for (i = 0; i < cpus_in_system; i++) {
+		int cpu_state = get_one_smt_state(i);
+		if (cpu_state == 0)
+			continue;
+
+		if (smt_state == -1)
+			smt_state = cpu_state;
+		if (smt_state != cpu_state) {
+			smt_state = -1;
+			break;
+		}
+	}
+
+	return smt_state;
 }
 
 static int set_one_smt_state(int thread, int online_threads)
@@ -508,28 +513,94 @@ static int is_dscr_capable(void)
 	return 0;
 }
 
-static int do_smt(char *state)
+void print_cpu_list(const cpu_set_t *cpuset, int cpuset_size)
+{
+	int core;
+	const char *comma = "";
+
+	for (core = 0; core < cpus_in_system; core++) {
+		int begin = core;
+		if (CPU_ISSET_S(core, cpuset_size, cpuset)) {
+			while (CPU_ISSET_S(core+1, cpuset_size, cpuset))
+				core++;
+
+			if (core > begin)
+				printf("%s%d-%d", comma, begin, core);
+			else
+				printf("%s%d", comma, core);
+			comma = ",";
+		}
+	}
+}
+ 
+static int do_smt(char *state, bool numeric)
 {
 	int rc = 0;
-	int smt_state;
+	int smt_state = 0;
 
 	if (!is_smt_capable()) {
-		fprintf(stderr, "Machine is not SMT capable\n");
+		if (numeric)
+			printf("SMT=1\n");
+		else
+			fprintf(stderr, "Machine is not SMT capable\n");
 		return -1;
 	}
 
 	if (!state) {
-		smt_state = get_smt_state();
+		int thread, c;
+		cpu_set_t *cpu_states[threads_per_cpu];
+		int cpu_state_size = CPU_ALLOC_SIZE(cpus_in_system);
+		int start_cpu = 0, stop_cpu = cpus_in_system;
 
-		if (smt_state == -2)
-			return -1;
+		for (thread = 0; thread < threads_per_cpu; thread++) {
+			cpu_states[thread] = CPU_ALLOC(cpus_in_system);
+			CPU_ZERO_S(cpu_state_size, cpu_states[thread]);
+		}
 
-		if (smt_state == 1)
-			printf("SMT is off\n");
-		else if (smt_state == -1)
-			printf("Inconsistent state: mix of ST and SMT cores\n");
-		else
+		for (c = start_cpu; c < stop_cpu; c++) {
+			int threads_online = get_one_smt_state(c);
+
+			if (threads_online < 0) {
+				rc = threads_online;
+				goto cleanup_get_smt;
+			}
+			if (threads_online)
+				CPU_SET_S(c, cpu_state_size,
+					  cpu_states[threads_online - 1]);
+		}
+
+		for (thread = 0; thread < threads_per_cpu; thread++) {
+			if (CPU_COUNT_S(cpu_state_size, cpu_states[thread])) {
+				if (smt_state == 0)
+					smt_state = thread + 1;
+				else if (smt_state > 0)
+					smt_state = -1; /* mix of SMT modes */
+			}
+		} 
+
+		if (smt_state == 1) {
+			if (numeric)
+				printf("SMT=1\n");
+			else
+				printf("SMT is off\n");
+		} else if (smt_state == -1) {
+			for (thread = 0; thread < threads_per_cpu; thread++) {
+				if (CPU_COUNT_S(cpu_state_size,
+						cpu_states[thread])) {
+					printf("SMT=%d: ", thread + 1);
+					print_cpu_list(cpu_states[thread],
+						       cpu_state_size);
+					printf("\n");
+				}
+			}
+		} else {
 			printf("SMT=%d\n", smt_state);
+		}
+
+cleanup_get_smt:
+		for (thread = 0; thread < threads_per_cpu; thread++)
+			CPU_FREE(cpu_states[thread]);
+
 	} else {
 		if (!strcmp(state, "on"))
 			smt_state = threads_per_cpu;
@@ -779,7 +850,7 @@ static int do_run_mode(char *run_mode)
 
 #ifdef HAVE_LINUX_PERF_EVENT_H
 
-static int setup_counters(struct cpu_freq *cpu_freqs)
+static int setup_counters(struct cpu_freq *cpu_freqs, int max_thread)
 {
 	int i;
 	struct perf_event_attr attr;
@@ -790,7 +861,10 @@ static int setup_counters(struct cpu_freq *cpu_freqs)
 	attr.disabled = 1;
 	attr.size = sizeof(attr);
 
-	for (i = 0; i < threads_in_system; i++) {
+	/* Record how long the event ran for */
+	attr.read_format |= PERF_FORMAT_TOTAL_TIME_RUNNING;
+
+	for (i = 0; i < max_thread; i++) {
 		if (!cpu_online(i)) {
 			cpu_freqs[i].offline = 1;
 			continue;
@@ -813,11 +887,11 @@ static int setup_counters(struct cpu_freq *cpu_freqs)
 	return 0;
 }
 
-static void start_counters(struct cpu_freq *cpu_freqs)
+static void start_counters(struct cpu_freq *cpu_freqs, int max_thread)
 {
 	int i;
 
-	for (i = 0; i < threads_in_system; i++) {
+	for (i = 0; i < max_thread; i++) {
 		if (cpu_freqs[i].offline)
 			continue;
 
@@ -825,11 +899,11 @@ static void start_counters(struct cpu_freq *cpu_freqs)
 	}
 }
 
-static void stop_counters(struct cpu_freq *cpu_freqs)
+static void stop_counters(struct cpu_freq *cpu_freqs, int max_thread)
 {
 	int i;
 
-	for (i = 0; i < threads_in_system; i++) {
+	for (i = 0; i < max_thread; i++) {
 		if (cpu_freqs[i].offline)
 			continue;
 
@@ -837,29 +911,42 @@ static void stop_counters(struct cpu_freq *cpu_freqs)
 	}
 }
 
-static void read_counters(struct cpu_freq *cpu_freqs)
+struct read_format {
+	uint64_t value;
+	uint64_t time_running;
+};
+
+static void read_counters(struct cpu_freq *cpu_freqs, int max_thread)
 {
 	int i;
+	struct read_format vals;
 
-	for (i = 0; i < threads_in_system; i++) {
+	for (i = 0; i < max_thread; i++) {
 		size_t res;
 
 		if (cpu_freqs[i].offline)
 			continue;
 
-		res = read(cpu_freqs[i].counter, &cpu_freqs[i].freq,
-			   sizeof(unsigned long long));
-		assert(res == sizeof(unsigned long long));
+		res = read(cpu_freqs[i].counter, &vals, sizeof(vals));
+		assert(res == sizeof(vals));
+
+		/* Warn if we don't get at least 0.1s of time on the CPU */
+		if (vals.time_running < 100000000) {
+			fprintf(stderr, "Measurement interval was too small, is someone running perf?\n");
+			exit(1);
+		}
+
+		cpu_freqs[i].freq = 1.0 * vals.value / vals.time_running;
 
 		close(cpu_freqs[i].counter);
 	}
 }
 
-static void check_threads(struct cpu_freq *cpu_freqs)
+static void check_threads(struct cpu_freq *cpu_freqs, int max_thread)
 {
 	int i;
 
-	for (i = 0; i < threads_in_system; i++) {
+	for (i = 0; i < max_thread; i++) {
 		if (cpu_freqs[i].offline)
 			continue;
 
@@ -978,33 +1065,37 @@ static void setrlimit_open_files(void)
 	setrlimit(RLIMIT_NOFILE, &new_rlim);
 }
 
-#define freq_calc(cycles, time)	(1.0 * (cycles) / (time) / 1000000000ULL)
-
 static int do_cpu_frequency(int sleep_time)
 {
 	int i, rc;
-	unsigned long long min = -1ULL;
+	double min = -1ULL;
 	unsigned long min_cpu = -1UL;
-	unsigned long long max = 0;
+	double max = 0;
 	unsigned long max_cpu = -1UL;
-	unsigned long long sum = 0;
+	double sum = 0;
 	unsigned long count = 0;
 	struct cpu_freq *cpu_freqs;
+	int max_thread;
 
 	setrlimit_open_files();
 
-	cpu_freqs = calloc(threads_in_system, sizeof(*cpu_freqs));
+	max_thread = MIN(threads_in_system, CPU_SETSIZE);
+	if (max_thread < threads_in_system)
+		printf("ppc64_cpu currently supports up to %d CPUs\n",
+			CPU_SETSIZE);
+
+	cpu_freqs = calloc(max_thread, sizeof(*cpu_freqs));
 	if (!cpu_freqs)
 		return -ENOMEM;
 
-	rc = setup_counters(cpu_freqs);
+	rc = setup_counters(cpu_freqs, max_thread);
 	if (rc) {
 		free(cpu_freqs);
 		return rc;
 	}
 
 	/* Start a soak thread on each CPU */
-	for (i = 0; i < threads_in_system; i++) {
+	for (i = 0; i < max_thread; i++) {
 		if (cpu_freqs[i].offline)
 			continue;
 
@@ -1019,16 +1110,16 @@ static int do_cpu_frequency(int sleep_time)
 	/* Wait for soak threads to start */
 	usleep(1000000);
 
-	start_counters(cpu_freqs);
+	start_counters(cpu_freqs, max_thread);
 	/* Count for specified timeout in seconds */
 	usleep(sleep_time * 1000000);
 
-	stop_counters(cpu_freqs);
-	check_threads(cpu_freqs);
-	read_counters(cpu_freqs);
+	stop_counters(cpu_freqs, max_thread);
+	check_threads(cpu_freqs, max_thread);
+	read_counters(cpu_freqs, max_thread);
 
-	for (i = 0; i < threads_in_system; i++) {
-		unsigned long long frequency;
+	for (i = 0; i < max_thread; i++) {
+		double frequency;
 
 		if (cpu_freqs[i].offline)
 			continue;
@@ -1048,11 +1139,9 @@ static int do_cpu_frequency(int sleep_time)
 	}
 
 	report_system_power_mode();
-	printf("min:\t%.3f GHz (cpu %ld)\n", freq_calc(min, sleep_time),
-	       min_cpu);
-	printf("max:\t%.3f GHz (cpu %ld)\n", freq_calc(max, sleep_time),
-	       max_cpu);
-	printf("avg:\t%.3f GHz\n\n", freq_calc((sum / count), sleep_time));
+	printf("min:\t%.3f GHz (cpu %ld)\n", min, min_cpu);
+	printf("max:\t%.3f GHz (cpu %ld)\n", max, max_cpu);
+	printf("avg:\t%.3f GHz\n\n", sum / count);
 
 	free(cpu_freqs);
 	return 0;
@@ -1060,7 +1149,7 @@ static int do_cpu_frequency(int sleep_time)
 
 #else
 
-static int do_cpu_frequency(void)
+static int do_cpu_frequency(int sleep_time)
 {
 	printf("CPU Frequency determination is not supported on this "
 	       "platfom.\n");
@@ -1130,19 +1219,13 @@ static int do_online_cores(char *cores, int state)
 	}
 
 	smt_state = get_smt_state();
-	if (smt_state == -1) {
-		printf("Bad or inconsistent SMT state: use ppc64_cpu --smt=on|off to set all\n"
-                       "cores to have the same number of online threads to continue.\n");
-		do_info();
-		return -1;
-	}
 
 	core_state = calloc(cpus_in_system, sizeof(int));
 	if (!core_state)
 		return -ENOMEM;
 
 	for (i = 0; i < cpus_in_system ; i++)
-		core_state[i] = cpu_online(i * threads_per_cpu);
+		core_state[i] = (get_one_smt_state(i) > 0);
 
 	if (!cores) {
 		printf("Cores %s = ", state == 0 ? "offline" : "online");
@@ -1158,6 +1241,13 @@ static int do_online_cores(char *cores, int state)
 		printf("\n");
 		free(core_state);
 		return 0;
+	}
+
+	if (smt_state == -1) {
+		printf("Bad or inconsistent SMT state: use ppc64_cpu --smt=on|off to set all\n"
+                       "cores to have the same number of online threads to continue.\n");
+		do_info();
+		return -1;
 	}
 
 	desired_core_state = calloc(cpus_in_system, sizeof(int));
@@ -1186,7 +1276,7 @@ static int do_online_cores(char *cores, int state)
 			rc = -1;
 			continue;
 		}
-		if (core > cpus_in_system || core < 0) {
+		if (core >= cpus_in_system || core < 0) {
 			printf("Invalid core to %s: %d\n", state == 0 ? "offline" : "online", core);
 			rc = -1;
 			continue;
@@ -1235,20 +1325,12 @@ static int do_cores_on(char *state)
 		}
 	}
 
-	smt_state = get_smt_state();
-	if (smt_state == -1) {
-		printf("Bad or inconsistent SMT state: use ppc64_cpu --smt=on|off to set all\n"
-                       "cores to have the same number of online threads to continue.\n");
-		do_info();
-		return -1;
-	}
-
 	core_state = calloc(cpus_in_system, sizeof(int));
 	if (!core_state)
 		return -ENOMEM;
 
 	for (i = 0; i < cpus_in_system ; i++) {
-		core_state[i] = cpu_online(i * threads_per_cpu);
+		core_state[i] = (get_one_smt_state(i) > 0);
 		if (core_state[i])
 			cores_now_online++;
 	}
@@ -1257,6 +1339,14 @@ static int do_cores_on(char *state)
 		printf("Number of cores online = %d\n", cores_now_online);
 		free(core_state);
 		return 0;
+	}
+
+	smt_state = get_smt_state();
+	if (smt_state == -1) {
+		printf("Bad or inconsistent SMT state: use ppc64_cpu --smt=on|off to set all\n"
+                       "cores to have the same number of online threads to continue.\n");
+		do_info();
+		return -1;
 	}
 
 	if (!strcmp(state, "all")) {
@@ -1363,7 +1453,7 @@ static void usage(void)
 {
 	printf(
 "Usage: ppc64_cpu [command] [options]\n"
-"ppc64_cpu --smt                     # Get current SMT state\n"
+"ppc64_cpu --smt [-n]                # Get current SMT state. [-n] shows numeric output\n"
 "ppc64_cpu --smt={on|off}            # Turn SMT on/off\n"
 "ppc64_cpu --smt=X                   # Set SMT state to X\n\n"
 "ppc64_cpu --cores-present           # Get the number of cores present\n"
@@ -1412,6 +1502,7 @@ int main(int argc, char *argv[])
 	char *equal_char;
 	int opt;
 	int sleep_time = 1; /* default to one second */
+	bool numeric = false;
 	pid_t pid = -1;
 
 	if (argc == 1) {
@@ -1443,7 +1534,7 @@ int main(int argc, char *argv[])
 	/* Now parse out any additional options. */
 	optind = 2;
 	while (1) {
-		opt = getopt(argc, argv, "p:t:");
+		opt = getopt(argc, argv, "p:t:n");
 		if (opt == -1)
 			break;
 
@@ -1470,6 +1561,15 @@ int main(int argc, char *argv[])
 
 			sleep_time = atoi(optarg);
 			break;
+		case 'n':
+			if (strcmp(action, "smt")) {
+				fprintf(stderr, "The n option is only valid "
+					"with the --smt option\n");
+				usage();
+				exit(-1);
+			}
+			numeric = true;
+			break;
 		default:
 			fprintf(stderr, "%c is not a valid option\n", opt);
 			usage();
@@ -1478,7 +1578,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (!strcmp(action, "smt"))
-		rc = do_smt(action_arg);
+		rc = do_smt(action_arg, numeric);
 	else if (!strcmp(action, "dscr"))
 		rc = do_dscr(action_arg, pid);
 	else if (!strcmp(action, "smt-snooze-delay"))

@@ -168,7 +168,7 @@ find_slot(char *drc_name, struct dr_node *all_nodes)
 	return node;
 }
 
-static int check_card_presence(struct options *opts, struct dr_node *node)
+static int check_card_presence(struct dr_node *node)
 {
 	int state = EMPTY;
 	int i, keep_working;
@@ -185,7 +185,7 @@ static int check_card_presence(struct options *opts, struct dr_node *node)
 			sleep(1);
 		}
 
-		if (0 == opts->noprompt) {
+		if (usr_prompt) {
 			printf("The card still does not appear to be present"
 			       "\npress Enter to continue to wait or enter "
 			       "'x' to exit.\n");
@@ -210,22 +210,20 @@ static int check_card_presence(struct options *opts, struct dr_node *node)
  * maybe isolate and try sensing again. If we hit fatal errors, call
  * error_exit to clean up and exit the command.
  *
- * @param opts
  * @param slot pointer to slot we're checking
  * @param power_state state of power when we leave this routine
  * @param isolate_state state of isolation when we leave this routine
  * @returns EMPTY or PRESENT
  */
-static int
-card_present(struct options *opts, struct dr_node *node, int *power_state,
-	     int *isolate_state)
+static int card_present(struct dr_node *node, int *power_state,
+			int *isolate_state)
 {
 	int state, rc;
 
 	*power_state = POWER_OFF;	/* initialize */
 	*isolate_state = ISOLATE;
 
-	state = check_card_presence(opts, node);
+	state = check_card_presence(node);
 	if ((state == EMPTY) || (state == PRESENT))
 		return state;
 
@@ -278,7 +276,7 @@ card_present(struct options *opts, struct dr_node *node, int *power_state,
 		/* Now we have power on, and the unisolate is done
 		 * if it was needed. check for card again.
 		 */
-		state = check_card_presence(opts, node);
+		state = check_card_presence(node);
 		if ((state == EMPTY) || (state == PRESENT))
 			return state;
 
@@ -312,14 +310,13 @@ card_present(struct options *opts, struct dr_node *node, int *power_state,
  * connected to the slot.  If an adapter node exists, turn the LED on,
  * else turn if off.
  */
-static int
-do_identify(struct options *opts, struct dr_node *all_nodes)
+static int do_identify(struct dr_node *all_nodes)
 {
 	struct dr_node *node;
 	int usr_key;
 	int led_state;
 
-	node = find_slot(opts->usr_drc_name, all_nodes);
+	node = find_slot(usr_drc_name, all_nodes);
 	if (node == NULL)
 		return -1;
 
@@ -361,12 +358,10 @@ do_identify(struct options *opts, struct dr_node *all_nodes)
  * If the OF tree cannot be updated, the slot is powered
  * off, isolated, and the LED is turned off.
  *
- * @param opts
  * @param slot
  * @returns 0 on success, !0 on failure
  */
-static int
-add_work(struct options *opts, struct dr_node *node)
+static int add_work(struct dr_node *node)
 {
 	int pow_state;	/* Tells us if power was turned on when	 */
 	int iso_state;	/* Tells us isolation state after 	 */
@@ -378,7 +373,7 @@ add_work(struct options *opts, struct dr_node *node)
 		return -1;
 
 	say(DEBUG, "is calling card_present\n");
-	rc = card_present(opts, node, &pow_state, &iso_state);
+	rc = card_present(node, &pow_state, &iso_state);
 	if (!rc) {
 		say(ERROR, "No PCI card was detected in the specified "
 		    "PCI slot.\n");
@@ -452,6 +447,69 @@ add_work(struct options *opts, struct dr_node *node)
 }
 
 /**
+ * do_insert_card_work
+ *
+ * Performs the steps required to set the isolation state and turn the
+ * power to a slot off. The prompts the user to insert the new card
+ * into the slot.
+ */
+static int do_insert_card_work(struct dr_node *node)
+{
+	int rc;
+
+	/* Now it's time to isolate, power off, set the action LED, and
+	 * prompt the user to put the card in.
+	 */
+	say(DEBUG, "is calling rtas_set_indicator(ISOLATE index 0x%x)\n",
+	    node->drc_index);
+
+	rc = rtas_set_indicator(ISOLATION_STATE, node->drc_index, ISOLATE);
+	if (rc) {
+		if (rc == HW_ERROR)
+			say(ERROR, "%s", hw_error);
+		else
+			say(ERROR, "%s", sw_error);
+
+		set_power(node->drc_power, POWER_OFF);
+		return -1;
+	}
+
+	say(DEBUG, "is calling set_power(POWER_OFF index 0x%x, "
+	    "power_domain 0x%x)\n", node->drc_index, node->drc_power);
+
+	rc = set_power(node->drc_power, POWER_OFF);
+	if (rc) {
+		if (rc == HW_ERROR)
+			say(ERROR, "%s", hw_error);
+		else
+			say(ERROR, "%s", sw_error);
+
+		return -1;
+	}
+
+	if (usr_prompt) {
+		/* Prompt user to put in card and to press
+		 * Enter to continue or other key to exit.
+		 */
+		if (process_led(node, LED_ACTION))
+			return -1;
+
+		printf("The visual indicator for the specified PCI slot has\n"
+			"been set to the action state. Insert the PCI card\n"
+			"into the identified slot, connect any devices to be\n"
+			"configured and press Enter to continue. Enter x to "
+			"exit.\n");
+
+		if (!(getchar() == '\n')) {
+			process_led(node, LED_OFF);
+			return 0;
+		}
+	}
+
+	return 0;
+}
+
+/**
  * do_add
  *
  * Prepares a PCI hot plug slot for adding an adapter, then
@@ -466,14 +524,13 @@ add_work(struct options *opts, struct dr_node *node)
  * attached devices then the Open Firmware device tree is
  * updated to reflect the new devices.
  */
-static int
-do_add(struct options *opts, struct dr_node *all_nodes)
+static int do_add(struct dr_node *all_nodes)
 {
 	struct dr_node *node;
 	int usr_key = USER_CONT;
 	int rc;
 
-	node = find_slot(opts->usr_drc_name, all_nodes);
+	node = find_slot(usr_drc_name, all_nodes);
 	if (node == NULL)
 		return -1;
 
@@ -483,8 +540,8 @@ do_add(struct options *opts, struct dr_node *all_nodes)
 	}
 
 	/* Prompt user only if in interactive mode. */
-	if (0 == opts->noprompt) {
-		if (!opts->no_ident)
+	if (usr_prompt) {
+		if (usr_slot_identification)
 			usr_key = identify_slot(node);
 
 		if (usr_key == USER_QUIT) {
@@ -505,62 +562,16 @@ do_add(struct options *opts, struct dr_node *all_nodes)
 		return -1;
 	}
 
-
-	/* Now it's time to isolate, power off, set the
-	 * action LED, and prompt the user to put the
-	 * card in.
-	 */
-
-	say(DEBUG, "is calling rtas_set_indicator(ISOLATE index 0x%x)\n",
-	    node->drc_index);
-
-	rc = rtas_set_indicator(ISOLATION_STATE, node->drc_index, ISOLATE);
-	if (rc) {
-		if (rc == HW_ERROR)
-			say(ERROR, "%s", hw_error);
-		else
-			say(ERROR, "%s", sw_error);
-
-		set_power(node->drc_power, POWER_OFF);
-		return -1;
-	}
-
-	say(DEBUG, "is calling set_power(POWER_OFF index 0x%x, "
-	    "power_domain 0x%x) \n", node->drc_index, node->drc_power);
-
-	rc = set_power(node->drc_power, POWER_OFF);
-	if (rc) {
-		if (rc == HW_ERROR)
-			say(ERROR, "%s", hw_error);
-		else
-			say(ERROR, "%s", sw_error);
-
-		return -1;
-	}
-
-	if (0 == opts->noprompt) {
-		/* Prompt user to put in card and to press
-		 * Enter to continue or other key to exit.
-		 */
-		if (process_led(node, LED_ACTION))
-			return -1;
-
-		printf("The visual indicator for the specified PCI slot has\n"
-			"been set to the action state. Insert the PCI card\n"
-			"into the identified slot, connect any devices to be\n"
-			"configured and press Enter to continue. Enter x to "
-			"exit.\n");
-
-		if (!(getchar() == '\n')) {
-			process_led(node, LED_OFF);
-			return 0;
-		}
+	if (!pci_hotplug_only) {
+		rc = do_insert_card_work(node);
+		if (rc)
+			return rc;
 	}
 
 	/* Call the routine which determines
 	 * what the user wants and does it.
 	 */
-	rc = add_work(opts, node);
+	rc = add_work(node);
 	if (rc)
 		return rc;
 
@@ -570,7 +581,7 @@ do_add(struct options *opts, struct dr_node *all_nodes)
 	 * qemu pci slots so we let the generic kernel pci code probe the device
 	 * by rescanning the bus in the qemu virtio case.
 	 */
-	if (!opts->pci_virtio)
+	if (!pci_virtio)
 		set_hp_adapter_status(PHP_CONFIG_ADAPTER, node->drc_name);
 	else
 		pci_rescan_bus();
@@ -593,15 +604,14 @@ do_add(struct options *opts, struct dr_node *all_nodes)
  *
  * @returns pointer slot on success, NULL on failure
  */
-static struct dr_node *
-remove_work(struct options *opts, struct dr_node *all_nodes)
+static struct dr_node *remove_work(struct dr_node *all_nodes)
 {
 	struct dr_node *node;
 	struct dr_node *child;
 	int rc;
 	int usr_key = USER_CONT;
 
-	node = find_slot(opts->usr_drc_name, all_nodes);
+	node = find_slot(usr_drc_name, all_nodes);
 	if (node == NULL)
 		return NULL;
 
@@ -613,9 +623,8 @@ remove_work(struct options *opts, struct dr_node *all_nodes)
 		return NULL;
 	}
 
-	/* Prompt user only if not in noprompt mode */
-	if (0 == opts->noprompt) {
-		if (!opts->no_ident)
+	if (usr_prompt) {
+		if (usr_slot_identification)
 			usr_key = identify_slot(node);
 
 		if (usr_key == USER_QUIT) {
@@ -639,7 +648,7 @@ remove_work(struct options *opts, struct dr_node *all_nodes)
 		return NULL;
 	}
 
-	if (!opts->pci_virtio) {
+	if (!pci_virtio) {
 		/* Make sure all the devices are
 		 * not configured before proceeding
 		 */
@@ -691,6 +700,9 @@ remove_work(struct options *opts, struct dr_node *all_nodes)
 			return NULL;
 		}
 	}
+
+	if (pci_hotplug_only)
+		return node;
 
 	/* We have to isolate and power off before
 	 * allowing the user to physically remove
@@ -745,20 +757,19 @@ remove_work(struct options *opts, struct dr_node *all_nodes)
  * If  the OF tree cannot be updated, the slot is powered
  * off, isolated, and the LED is turned off.
  */
-static int
-do_remove(struct options *opts, struct dr_node *all_nodes)
+static int do_remove(struct dr_node *all_nodes)
 {
 	struct dr_node *node;
 
 	/* Remove the specified slot and update the device-tree */
-	node = remove_work(opts, all_nodes);
+	node = remove_work(all_nodes);
 	if (node == NULL)
 		return -1;
 
 	/* Prompt user to remove card and to press
 	 * Enter to continue. Can't exit out of here.
 	 */
-	if (0 == opts->noprompt) {
+	if (usr_prompt) {
 		if (process_led(node, LED_ACTION))
 			return -1;
 
@@ -794,8 +805,7 @@ do_remove(struct options *opts, struct dr_node *all_nodes)
  * If the OF tree cannot be updated, the slot is powered
  * off, isolated, and the LED is turned off.
  */
-static int
-do_replace(struct options *opts, struct dr_node *all_nodes)
+static int do_replace(struct dr_node *all_nodes)
 {
 	struct dr_node *repl_node;
 	int rc;
@@ -803,7 +813,7 @@ do_replace(struct options *opts, struct dr_node *all_nodes)
 	/* Call the routine which does the work of getting the node info,
 	 * then removing it from the OF device tree.
 	 */
-	repl_node = remove_work(opts, all_nodes);
+	repl_node = remove_work(all_nodes);
 	if (repl_node == NULL)
 		return -1;
 
@@ -819,7 +829,7 @@ do_replace(struct options *opts, struct dr_node *all_nodes)
 	 * Enter to continue or x to exit. Exiting here
 	 * means the original card has been removed.
 	 */
-	if (0 == opts->noprompt) {
+	if (usr_prompt) {
 		if (process_led(repl_node, LED_ACTION))
 			return -1;
 
@@ -835,7 +845,7 @@ do_replace(struct options *opts, struct dr_node *all_nodes)
 		}
 	}
 
-	rc = add_work(opts, repl_node);
+	rc = add_work(repl_node);
 	if (rc)
 		return rc;
 
@@ -845,45 +855,44 @@ do_replace(struct options *opts, struct dr_node *all_nodes)
 	set_hp_adapter_status(PHP_CONFIG_ADAPTER, repl_node->drc_name);
 
 	if (repl_node->post_replace_processing) {
-		int prompt_save = opts->noprompt;
+		int prompt_save = usr_prompt;
 
 		say(DEBUG, "Doing post replacement processing...\n");
 		/* disable prompting for post-processing */
-		opts->noprompt = 1;
+		usr_prompt = 0;;
 
-		repl_node = remove_work(opts, repl_node);
-		rc = add_work(opts, repl_node);
+		repl_node = remove_work(repl_node);
+		rc = add_work(repl_node);
 		if (!rc)
 			set_hp_adapter_status(PHP_CONFIG_ADAPTER,
 					      repl_node->drc_name);
 
-		opts->noprompt = prompt_save;
+		usr_prompt = prompt_save;
 	}
 
 	return rc;
 }
 
-int
-valid_pci_options(struct options *opts)
+int valid_pci_options(void)
 {
-	if ((opts->action == IDENTIFY) && (opts->no_ident)) {
+	if ((usr_action == IDENTIFY) && (!usr_slot_identification)) {
 		say(ERROR, "Cannot specify the -i and -I option together\n");
 		return -1;
 	}
 
 	/* The -s option can specify a drc name or drc index */
-	if (opts->usr_drc_name && !strncmp(opts->usr_drc_name, "0x", 2)) {
-		opts->usr_drc_index = strtoul(opts->usr_drc_name, NULL, 16);
-		opts->usr_drc_name = NULL;
+	if (usr_drc_name && !strncmp(usr_drc_name, "0x", 2)) {
+		usr_drc_index = strtoul(usr_drc_name, NULL, 16);
+		usr_drc_name = NULL;
 	}
 
-	if (opts->usr_drc_name == NULL && !opts->usr_drc_index) {
+	if (!usr_drc_name  && !usr_drc_index) {
 		say(ERROR, "A drc name or index must be specified\n");
 		return -1;
 	}
 
-	if ((opts->action != ADD) && (opts->action != REMOVE)
-	    && (opts->action != IDENTIFY) && (opts->action != REPLACE)) {
+	if ((usr_action != ADD) && (usr_action != REMOVE)
+	    && (usr_action != IDENTIFY) && (usr_action != REPLACE)) {
 		say(ERROR, "The '-r', '-a', '-R' or '-i' option must be spcified "
 	 	    "for PCI operations\n");
 		return -1;
@@ -892,8 +901,7 @@ valid_pci_options(struct options *opts)
 	return 0;
 }
 
-int
-drslot_chrp_pci(struct options *opts)
+int drslot_chrp_pci(void)
 {
 	int rc;
 	struct dr_node *all_nodes;
@@ -908,21 +916,21 @@ drslot_chrp_pci(struct options *opts)
 	print_slots_list(all_nodes);
 #endif
 
-	if (!opts->usr_drc_name)
-		opts->usr_drc_name = find_drc_name(opts->usr_drc_index, all_nodes);
+	if (!usr_drc_name)
+		usr_drc_name = find_drc_name(usr_drc_index, all_nodes);
 
-	switch (opts->action) {
+	switch (usr_action) {
 	    case ADD:
-		rc = do_add(opts, all_nodes);
+		rc = do_add(all_nodes);
 		break;
 	    case REMOVE:
-		rc = do_remove(opts, all_nodes);
+		rc = do_remove(all_nodes);
 		break;
 	    case REPLACE:
-		rc = do_replace(opts, all_nodes);
+		rc = do_replace(all_nodes);
 		break;
 	    case IDENTIFY:
-		rc = do_identify(opts, all_nodes);
+		rc = do_identify(all_nodes);
 		break;
 	    default:
 		say(ERROR, "Invalid operation specified!\n");

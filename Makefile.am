@@ -21,6 +21,7 @@ sbin_SCRIPTS = \
 	scripts/ls-veth \
 	scripts/ls-vscsi \
 	scripts/ls-vdev \
+	scripts/nvsetenv \
 	scripts/pseries_platform
 
 man_MANS = \
@@ -63,7 +64,7 @@ pseries_platform_SOURCES = src/common/pseries_platform.c src/common/pseries_plat
 librtas_error_SOURCES = src/common/librtas_error.c src/common/librtas_error.h
 
 src_nvram_SOURCES = src/nvram.c src/nvram.h $(pseries_platform_SOURCES)
-src_nvram_LDADD = -ldl -lz
+src_nvram_LDADD = -lz @LIBDL@
 
 src_lsprop_SOURCES = src/lsprop.c $(pseries_platform_SOURCES)
 
@@ -157,8 +158,8 @@ noinst_HEADERS += \
 	src/drmgr/drpci.h \
 	src/drmgr/rtas_calls.h \
 	src/drmgr/ofdt.h \
-	src/drmgr/lsslot.h \
-	src/drmgr/rtas_calls.h
+	src/drmgr/rtas_calls.h \
+	src/drmgr/options.c
 
 src_drmgr_drmgr_LDADD = -lrtas
 
@@ -172,6 +173,9 @@ src_drmgr_lsslot_SOURCES = \
 	src/drmgr/rtas_calls.c \
 	src/drmgr/drslot_chrp_mem.c \
 	$(pseries_platform_SOURCES)
+
+noinst_HEADERS += \
+	src/drmgr/options.c
 
 src_drmgr_lsslot_LDADD = -lrtas
 
