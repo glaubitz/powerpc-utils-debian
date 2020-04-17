@@ -1,0 +1,114 @@
+%define name powerpc-utils
+%define version @PACKAGE_VERSION@
+%define release 1
+Summary:	Utilities for PowerPC platforms
+Name:		%{name}
+Version:	%{version}
+Release:	%{release}
+License:	GNU General Public License (GPL)
+Group:		System Environment
+Source:		powerpc-utils-%{version}.tar.gz
+BuildRoot:	/tmp/%{name}-buildroot/
+Requires:	/bin/bash, /bin/sh, /bin/sed, /usr/bin/perl, librtas >= 1.4.0, zlib
+Requires:	bc
+Requires:	coreutils
+Requires:	findutils
+Requires:	gawk
+Requires:	grep
+Requires:	/sbin/modprobe
+Requires:	/sbin/shutdown
+Requires:	udev
+Requires:	util-linux
+Requires:	which
+
+%description
+Utilities for maintaining and servicing PowerPC systems.
+
+%prep
+%setup -q
+
+%build
+%configure
+%{__make} %{?_smp_mflags}
+
+%install
+%{__rm} -rf $RPM_BUILD_ROOT
+%{__make} install DESTDIR=$RPM_BUILD_ROOT
+
+%files
+%defattr(-,root,root)
+/usr/share/doc/packages/powerpc-utils/README
+/usr/share/doc/packages/powerpc-utils/COPYING
+
+/usr/sbin/update_flash
+/usr/sbin/update_flash_nv
+/usr/sbin/activate_firmware
+/usr/sbin/set_poweron_time
+/usr/sbin/rtas_ibm_get_vpd
+/usr/sbin/serv_config
+/usr/sbin/uesensor
+/usr/sbin/hvcsadmin
+/usr/sbin/rtas_dump
+/usr/sbin/rtas_event_decode
+/usr/sbin/sys_ident
+/usr/sbin/drmgr
+/usr/sbin/lsslot
+/usr/sbin/lsprop
+/usr/sbin/nvram
+/usr/sbin/snap
+/usr/sbin/bootlist
+/usr/sbin/ofpathname
+/usr/sbin/ppc64_cpu
+/usr/sbin/lsdevinfo
+/usr/sbin/ls-veth
+/usr/sbin/ls-vdev
+/usr/sbin/ls-vscsi
+/usr/sbin/lparstat
+/usr/sbin/pseries_platform
+/usr/sbin/errinjct
+/usr/sbin/rtas_dbg
+
+/usr/bin/amsstat
+
+/usr/share/man/man8/update_flash.8.gz
+/usr/share/man/man8/activate_firmware.8.gz
+/usr/share/man/man8/set_poweron_time.8.gz
+/usr/share/man/man8/rtas_ibm_get_vpd.8.gz
+/usr/share/man/man8/serv_config.8.gz
+/usr/share/man/man8/uesensor.8.gz
+/usr/share/man/man8/hvcsadmin.8.gz
+/usr/share/man/man8/rtas_dump.8.gz
+/usr/share/man/man8/sys_ident.8.gz
+/usr/share/man/man8/nvram.8.gz
+/usr/share/man/man8/snap.8.gz
+/usr/share/man/man8/bootlist.8.gz
+/usr/share/man/man8/ofpathname.8.gz
+/usr/share/man/man5/lparcfg.5.gz
+/usr/share/man/man8/lparstat.8.gz
+/usr/share/man/man8/lsslot.8.gz
+/usr/share/man/man8/ppc64_cpu.8.gz
+/usr/share/man/man1/amsstat.1.gz
+/usr/share/man/man8/errinjct.8.gz
+/usr/share/man/man8/rtas_dbg.8.gz
+
+%post
+# Post-install script -----------------------------------------------
+ln -sf /usr/sbin/serv_config usr/sbin/uspchrp
+ln -sf /usr/share/man/man8/serv_config.8 usr/share/man/man8/uspchrp.8
+
+%postun
+# Post-uninstall script ---------------------------------------------
+if [ "$1" = "0" ]; then
+	# last uninstall
+	rm -f /usr/sbin/uspchrp
+	rm -f /usr/share/man/man8/uspchrp.8.gz
+fi
+
+%changelog
+* Tue Dec  7 2011 Brian King <brking@linux.vnet.ibm.com>
+- Added lsslot man page
+* Fri May 13 2011 Brian King <brking@linux.vnet.ibm.com>
+- Fixed some ofpathname issues with various SAS and FC adapters
+
+* Fri Mar 11 2011 Brian King <brking@linux.vnet.ibm.com>
+- Do not install vscsi server scripts, since they are deprecated

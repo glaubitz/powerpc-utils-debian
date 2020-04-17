@@ -1,0 +1,61 @@
+.\"
+.\" Copyright (C) 2004 International Business Machines
+.\" Nathan Fontenot <nfont@linux.vnet.ibm.com>
+.\"
+.TH BOOTLIST 8 "May 2013" Linux "Linux on Power Service Tools"
+.SH NAME
+bootlist - update and view the bootlist
+.SH SYNOPSIS
+.nf
+\fB/usr/sbin/bootlist \-m \fR{\fBnormal\fR|\fBservice\fR|\fBboth\fR}\fB -o\fR|\fB-r\fR
+\fB/usr/sbin/bootlist \-m \fR{\fBnormal\fR|\fBservice\fR|\fBboth\fR} [\fB-o\fR|\fB-r\fR] \fB-f \fIfile
+\fB/usr/sbin/bootlist \-m \fR{\fBnormal\fR|\fBservice\fR|\fBboth\fR} [\fB-o\fR|\fB-r\fR] <\fIdev_list\fR>
+.fi
+.SH DESCRIPTION
+The bootlist command allows users to view and update the system bootlist
+stored in NVRAM for PowerPC-64 machines. To update the list of boot devices
+one or more boot devices can be specified directly or read from a file. This
+list of devices may be specified as either logical device names or the
+full Open Firmware device path. The bootlist command uses the \fIofpathanme\fR
+script to convert between logical device names and Open Firmware device
+paths, and the \fInvram\fR command to update the stored boot list.
+
+If a list of devices is not specified, or the -o or -r options are specified,
+the current boot list stored in nvram is displayed.
+
+.SH OPTIONS
+.TP
+\fB\-m normal\fR|\fBservice\fR|\fBboth
+Required; specify whether the normal or service mode boot list should be
+viewed/updated.  Specifying "both" will update the normal and service mode
+boot lists.
+.TP
+\fB\-o
+Display the current boot list entries as logical device names.
+.TP
+\fB\-r
+Display the current boot list entries as Open Firmware device path names
+(default).
+.TP
+\fB\-f \fIfile
+Read the bootlist device names from \fIfile\fR, one entry per line.
+.TP
+\fIdev_list
+A space-separated list of devices, specified as logical device names or OF
+device path names, depending on whether the \fB-o\fR or \fB-r\fR option is
+specified.
+.SH EXAMPLES
+.nf
+View the normal mode boot list as logical device names:
+
+    /usr/sbin/bootlist -o -m normal
+
+Update the service mode boot list:
+
+    /usr/sbin/bootlist -o -m service /dev/sda3 /dev/cdrom
+.fi
+.SH AUTHOR
+Written by Nathan Fontenot
+.SH "SEE ALSO"
+.BR ofpathname (8),
+.BR nvram (8)

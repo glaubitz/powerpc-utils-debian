@@ -1,0 +1,499 @@
+#!/usr/bin/perl -w
+# Copyright (c) 2003, 2004, 2012 International Business Machines
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+#
+# Author Todd Inglett <tinglett@us.ibm.com>
+# updates by Michael Strosaker <strosake@us.ibm.com>
+# updates by Vasant Hegde <hegdevasant@in.ibm.com>
+
+# Snapshot system config
+# Command-line parameters:
+#    a:       all data; collect detailed information (more files and output)
+#    d dir:   specify the directory where files and output will be collected
+#               (default: /tmp/ibmsupt)
+#    h:       print this help message
+#    o file:  specify the output file (.tar required, .tar.gz optional)
+#               (default: snap.tar.gz)
+#    v:       verbose output
+#
+#  Exit codes (view with "echo $?" immediately after running):
+#    0:  snap data was successfully captured
+#    1:  invalid command line
+#    2:  other fatal error
+
+use strict;
+use Getopt::Std;
+use POSIX qw(strftime);
+use Sys::Hostname;
+use FileHandle;
+use File::Basename;
+
+my $PSERIES_PLATFORM = dirname(__FILE__) . "/pseries_platform";
+my $outdir = "/tmp/ibmsupt";		# note NO trailing /
+my $outfile = "snap.tar.gz";		# in the working dir.
+my $cmddir = "snap_commands";		# cmd output dir.
+my $cmdoutdir = "$outdir/$cmddir";	# in outdir dir.
+my $rsxx_exists = 0;			# Does an IBM Flash Adapter exist?
+
+sub check_distro_support {
+	my $redhat_release_file = "/etc/redhat-release";
+	my $suse_release_file = "/etc/SuSE-release";
+	my $distro_file = "/etc/issue";
+
+	if (-e $redhat_release_file) {
+		open(RELEASE, "< $redhat_release_file") or die "open: $!\n";
+		$_ = <RELEASE>;
+		my $redhat_version = (split / /, $_)[6];
+		if ($redhat_version >= 7.0) {
+			print "snap is not supported on the RHEL 7 onwards..!\n";
+			print "Please use sosreport to collect log data..!! \n";
+			close(RELEASE);
+			exit 1;
+		}
+		close(RELEASE);
+	} elsif (-e $suse_release_file) {
+		open(RELEASE, "< $suse_release_file") or die "open: $!\n";
+		while(<RELEASE>) {
+			if ($_ =~ /VERSION/) {
+				my $suse_version = (split /=/, $_)[1];
+				if ($suse_version >= 12) {
+					print "snap is deprecated from SLES 12 onwards..!\n";
+					print "Please use supportconfig to collect log data..!! \n";
+					close(RELEASE);
+					exit 1;
+				}
+			} # if
+		} # while
+		close(RELEASE);
+	} else {
+		open(RELEASE, "< $distro_file") or die "open: $!\n";
+		if (<RELEASE> =~ /Ubuntu/) {
+			print "snap: is not supported on the Ubuntu platform\n";
+			close(RELEASE);
+			exit 1;
+		} #if
+	} #else
+}
+
+our($opt_a, $opt_d, $opt_h, $opt_o, $opt_t, $opt_v);
+
+#  Files to include in all snaps
+my @snap_paths_general = (
+  "/var/log/messages",
+  "/var/log/platform",
+  "/var/log/scanoutlog.*",
+#  "/proc/bus/pci",	?? binary file
+  "/proc/cmdline",
+  "/proc/cpuinfo",
+  "/proc/devices",
+  "/proc/dma",
+  "/proc/filesystems",
+  "/proc/fs",
+  "/proc/ide",
+  "/proc/interrupts",
+  "/proc/iomem",
+  "/proc/ioports",
+  "/proc/loadavg",
+  "/proc/locks",
+  "/proc/mdstat",
+  "/proc/meminfo",
+  "/proc/misc",
+  "/proc/modules",
+  "/proc/mounts",
+  "/proc/net",
+  "/proc/partitions",
+  "/proc/pci",
+  "/proc/ppc64/lparcfg",
+  "/proc/ppc64/eeh",
+  "/proc/ppc64/pci",
+  "/proc/ppc64/systemcfg",
+  "/proc/scsi",
+  "/proc/slabinfo",
+  "/proc/stat",
+  "/proc/swaps",
+  "/proc/sys",
+  "/proc/sysvipc",
+  "/proc/uptime",
+  "/proc/version",
+  "/dev/nvram",
+  "/etc/fstab",
+  "/etc/raidtab",
+  "/etc/yaboot.conf",
+);
+
+#  Files to include in all snaps on SuSE systems
+my @snap_paths_general_SuSE = (
+  "/etc/SuSE-release",
+  "/var/log/boot.msg",
+);
+
+#  Files to include in all snaps on Red Hat systems
+my @snap_paths_general_RedHat = (
+  "/etc/redhat-release",
+  "/var/log/dmesg",
+);
+
+#  Files to include only in detailed snaps (-a option)
+my @snap_paths_detailed = (
+  "/proc/tty",
+  "/etc/inittab",
+  "/proc/ppc64/",
+  "/proc/device-tree/",
+);
+
+#  Command output to include in all snaps
+my @snap_commands_general = (
+  "lscfg -vp",
+  "ifconfig -a",
+  "lspci -vvv"
+);
+
+#  Command output to include only in detailed snaps (-a option)
+my @snap_commands_detailed = (
+  "rpm -qa",
+  "servicelog --dump",
+  "servicelog_notify --list",
+  "usysattn",
+  "usysident",
+  "serv_config -l",
+  "bootlist -m both -r",
+  "lparstat -i",
+  "lsmcode -A",
+  "lsvpd --debug",
+  "lsvio -des",
+  "ppc64_cpu --smt --cores-present --cores-on --run-mode --frequency --dscr",
+);
+
+# Command output to include for IBM Flash Adapter(s)
+my @snap_command_rsxx = (
+  "rs_cardreport -d 'all'",
+);
+
+# Files, which are to be ignored as they are deprecated
+my @snap_deprecated_files = (
+  "retrans_time",
+  "base_reachable_time",
+);
+
+sub recurse_dir($);		# function prototype
+
+sub error {
+	my ($fatal, $message) = @_;
+
+	if ($fatal) {
+		print "$0: $message\n";
+		exit 2;
+	}
+	else {
+		if ($opt_v) {
+			print "$0: $message\n";
+		}
+	}
+}
+
+sub print_usage {
+	print "Usage: $0 [-athv] [-d dir] [-o file]\n\n";
+	print "  Command-line parameters:\n";
+	print "    a:       all data; collect detailed information (more files and output)\n";
+	print "    d dir:   specify the directory where files and output will be collected\n";
+	print "               (default: /tmp/ibmsupt)\n";
+	print "    o file:  specify the output file (.tar required, .tar.gz optional)\n";
+	print "               (default: snap.tar.gz)\n";
+	print "    t:       add hostname and timestamp to output filename\n";
+	print "    v:       verbose output\n\n";
+	print "    h:       print this help message\n";
+	print "  Exit codes (view with \"echo \$?\" immediately after running):\n";
+	print "    0:  snap data was successfully captured\n";
+	print "    1:  invalid command line\n";
+	print "    2:  other fatal error\n\n";
+}
+
+sub copy {
+	my ($source, $destination) = @_;
+	my ($dir, @path, $d, $blocksize, $buffer, $length, $offset, $written);
+
+	#print "Copying $source...";
+
+	# Create directories, if necessary
+	$dir = substr $destination, 0, rindex($destination, "/");
+	if (!(-d $dir)) {
+		@path = split /\//, $dir;
+		if (substr($dir, 0, 1) eq "/") {	# remove leading /
+			shift @path;
+		}
+		$dir = "";
+		foreach $d (@path) {
+			$dir .= "/" . $d;
+			if (!(-d $dir)) {
+				if (!mkdir($dir, 0644)) {
+					error(0, "Cannot create directory: $dir");
+					return;
+				}
+			}
+		}
+	}
+
+	# Copy file
+	if (!sysopen(SRC, "$source", O_NONBLOCK|O_RDONLY)) {
+		error(0, "Cannot open file for reading: $source");
+		return;
+	}
+	binmode SRC;
+	if (!open(DST, ">$destination")) {
+		error(0, "Cannot open file for writing: $destination");
+		goto copy_out;
+	}
+	binmode DST;
+
+	$blocksize = (stat SRC)[11] || 16384;
+	while ($length = sysread SRC, $buffer, $blocksize) {
+		if (!defined $length) {
+			next if $! =~ /^Interrupted/;	# ^Z and fg
+			error(0, "System read error while reading $source: $!");
+			goto copy_out;
+		}
+		$offset = 0;
+		while ($length) {
+			if (!defined($written = syswrite DST, $buffer, $length, $offset)) {
+				error(0, "System write error while writing $destination: $!");
+				goto copy_out;
+			}
+			$length -= $written;
+			$offset += $written;
+		}
+	}
+
+copy_out:
+	#print "done.\n";
+	close SRC;
+	close DST;
+}
+
+sub recurse_dir ($) {
+	my ($dir) = @_;
+	my ($file) = "";
+	my (@contents) = ();
+
+	if (!opendir(DIR, $dir)) {
+		error(0, "Could not open directory $dir");
+		return;
+	}
+
+	@contents = readdir DIR;
+	closedir DIR;
+
+	foreach $file (@contents) {
+		if ($file eq "." or $file eq ".." or (-l "$dir/$file")) {
+			next;
+		}
+
+		if (-d "$dir/$file") {
+			recurse_dir "$dir/$file";
+		}
+		else {
+			next if  (grep { /$file/  } @snap_deprecated_files);
+			copy "$dir/$file", $outdir."$dir/$file";
+		}
+	}
+}
+
+sub snap_paths {
+	my ($file, $dir, $search, @contents);
+
+	foreach $file (@_) {
+		# For now do not collect proc ppc64 files for guest.
+		next if ($file =~ "/proc/ppc64/" &&
+			$ENV{'platform'} == $ENV{'PLATFORM_POWERKVM_GUEST'});
+
+		if (-d $file) {
+			recurse_dir $file;
+		}
+		else {
+			# Check for wildcard (* in last character only)
+			if (substr($file, -1) eq "*") {
+				$dir = substr $file, 0, rindex($file, "/");
+				$search = substr $file, rindex($file, "/")+1, -1;
+
+				if (!opendir(DIR, $dir)) {
+					error(0, "Could not open directory $dir");
+					return;
+				}
+
+				@contents = readdir DIR;
+				closedir DIR;
+
+				foreach $file (@contents) {
+					if (substr($file, 0, length($search)) eq $search) {
+						copy "$dir/$file", $outdir."$dir/$file";
+					}
+				}
+			}
+			else {
+				copy $file, $outdir.$file;
+			}
+		}
+	}
+}
+
+sub snap_commands {
+	my ($path, @junk, @path, $filename, $command, $exit_value);
+
+	if (!(-d $cmdoutdir)) {
+		if (!mkdir($cmdoutdir, 0644)) {
+			error(0, "Cannot create directory: $cmdoutdir");
+			return;
+		}
+	}
+
+	foreach $command (@_) {
+		# Retrieve the name of the binary to run (for output file name)
+		($path, @junk) = split / /, $command;
+		@path = reverse(split /\//, $path);
+		$filename = shift @path;
+
+		system("$command > $cmdoutdir/$filename.out 2>&1");
+		if ($exit_value = $? >> 8) {
+			error(0, "\"$command\" returned $exit_value");
+		}
+	}
+}
+
+$< == 0 or error(1, "Must be executed as root");
+
+#check for the distro version
+check_distro_support();
+
+my $perldumpenv='perl -MData::Dumper -e '."'".
+    '\$Data::Dumper::Terse=1;print Dumper(\%ENV);'."'";
+
+eval '%ENV=('.$1.')' if `bash -c "
+        . $PSERIES_PLATFORM;
+        $perldumpenv"`
+    =~ /^\s*\{(.*)\}\s*$/mxs;
+
+if ($ENV{'platform'} == $ENV{'PLATFORM_UNKNOWN'} || $ENV{'platform'} == $ENV{'PLATFORM_POWERNV'}) {
+        print "snap: is not supported on the $ENV{'platform_name'} platform\n";
+        exit 1;
+}
+
+if (!getopts('atd:ho:v')) {
+	print_usage;
+	exit 1;
+}
+
+if ($opt_h) {
+	print_usage;
+	exit 0;
+}
+
+if ($opt_d) {
+	$outdir = $opt_d;
+	$cmdoutdir = "$opt_d/$cmddir";
+}
+
+if (-e $outdir) {
+	print "$0: cannot run; $outdir already exists.\n";
+	exit 2;
+}
+
+if (substr($outdir, -1) eq "/") {
+	$outdir = substr $outdir, 0, -1;
+}
+
+if ($opt_o) {
+	if ($opt_o !~ /.tar/) {
+		print "$0: The filename provided, $opt_o, does not contain .tar;";
+		print " Using default filename $outfile\n";
+	}
+	else {
+		$outfile = $opt_o;
+	}
+}
+
+if ($opt_t) {
+	my $host = `hostname`;
+	chomp($host);
+	my @halias = split(/\./, $host);
+
+	my $time = strftime('%Y%m%d%H%M%S',localtime);
+	my $temp = substr $outfile, 0, rindex($outfile, ".tar");
+	my $temp1 = substr $outfile, rindex($outfile, ".tar") + 1;
+	$outfile = "$temp-$halias[0]-$time.$temp1";
+}
+
+if (-e $outfile) {
+	print "$0: cannot run; $outfile already exits.\n";
+	exit 2;
+}
+
+# Check to see if we need to gather information on IBM Flash Adapter(s).
+if (glob("/dev/rsxx*")) {
+	$rsxx_exists = 1;
+}
+
+snap_paths(@snap_paths_general);
+
+# Check distro
+if (-e "/etc/SuSE-release") {
+	snap_paths(@snap_paths_general_SuSE);
+}
+elsif (-e "/etc/redhat-release") {
+	snap_paths(@snap_paths_general_RedHat);
+}
+
+# Run commands and capture output
+snap_commands(@snap_commands_general);
+
+# Gather detail files if requested (-a option)
+if ($opt_a) {
+	snap_paths(@snap_paths_detailed);
+	snap_commands(@snap_commands_detailed);
+}
+
+# Gather information regarding IBM Flash Adapter(s)
+if ($rsxx_exists) {
+	# Verify the rsxx utils are installed.
+	system("rpm -qa | grep rsxx-utils > /dev/null");
+	if ($? == 0) {
+		snap_commands(@snap_command_rsxx);
+	} else {
+		print "Warning: The rsxx-utils RPM are not installed, ".
+		      "unable to gather IBM Flash Adapter information.\n".
+		      "\t Run 'yum install rsxx-utils' to install.\n";
+	}
+}
+
+my ($basefile, $extension) = split /\.tar/, $outfile;
+my $basedir = substr $outdir, 0, rindex($outdir, "/");
+my $compressdir = substr $outdir, rindex($outdir, "/") + 1;
+
+system ("tar -cf $basefile.tar --directory=$basedir $compressdir 2>/dev/null");
+
+if ($extension eq ".gz") {
+	system ("gzip -f $basefile.tar");
+}
+elsif ($extension eq "") { }
+else {
+	$outfile = "$basefile.tar";
+	print "$0: Unrecognized extension $extension\n";
+}
+
+# Delete temporary directory
+system("rm -rf $outdir");
+
+print "output written to $outfile\n";
+print "WARNING: archive may contain confidential data and/or cleartext passwords!\n";
+exit 0;

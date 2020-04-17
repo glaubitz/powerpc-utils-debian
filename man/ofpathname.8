@@ -1,0 +1,36 @@
+.\"
+.\" Copyright (C) 2004 International Business Machines
+.\" Nathan Fontenot <nfont@linux.vnet.ibm.com>
+.\"
+.TH OFPATHNAME 8 "April 2004" Linux "Linux on Power Service Tools"
+.SH NAME
+ofpathname \- translate between Open Firmware and logical device names
+.SH SYNOPSIS
+\fB/usr/sbin/ofpathname \fR[\fB-laqVh\fR] \fIname
+.SH DESCRIPTION
+.I Ofpathname
+provides the ability to translate logical device names to their Open Firmware
+device path names for PowerPC-64 systems.  It can also translate an Open
+Firmware device path to its logical device name using the -l option.
+.SH OPTIONS
+.TP
+\fB\-l
+Translate the \fIname \fRparameter to the corresponding logical device name.
+.TP
+\fB\-a
+Find a matching Open Firmware device alias[es].
+.TP
+\fB\--quiet \fR(\fB\-q\fR)
+Do not report any failures, exit quietly.
+.TP
+\fB\--version \fR(\fB\-V\fR)
+Display version information and exit.
+.TP
+\fB\--help \fR(\fB\-h\fR)
+print usage information.
+.SH AUTHOR
+Written by Nathan Fontenot
+.SH "SEE ALSO"
+.BR bootlist (8),
+.BR nvram (8)
+

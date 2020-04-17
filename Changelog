@@ -1,0 +1,1457 @@
+powerpc-utils-1.3.2
+=====================================================================
+commit 4e5b9dacf7bbddfb58269fc50de6586a9ac6fdfd
+Author: Ulrich Weigand <ulrich.weigand@de.ibm.com>
+Date:   Mon Jul 11 17:13:17 2016 -0400
+
+    lparstat: Fix computation of time used in statistics
+    
+    The routine get_time computes bogus timestap values due to confusing
+    seconds and microseconds.  This leads to incorrect return values from
+    elapsed_time and therefore incorrect values for the physc field.
+    
+    Fixed by converting the "time" sysentry field to microseconds (and
+    computing it correctly), and updating the user of elapsed_time.
+    
+    In addition, %entc is supposed to show the ratio of physc to the
+    number of entitled CPUs as *percentage*, so the ratio needs to be
+    multiplied by 100.
+    
+    Signed-off-by: Ulrich Weigand <ulrich.weigand@de.ibm.com>
+    Signed-off-by: Michael Bringmann <mbringm@us.ibm.com>
+
+commit a97c5664f53f9a18dd0b941a842d7884253cf8ed
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Jul 11 17:06:26 2016 -0400
+
+    drmgr: Disable use of in-kernel cpu hotplug
+    
+    After submitting the patch to update drmgr to use the in-kernel hotplug
+    capabilities for memory and cpu, commit <bbc5fc07c54d> (drmgr: Start using
+    in-kernel DLPAR functionality for cpu/memory), I realized there
+    are still distro kernels that do not have the in-kernel cpu hotplug
+    capabilities. Using the latest drmgr with this update breaks cpu dlpar
+    because the cpu dlpar code assumes that if the dlpar sysfs file exists
+    then in-kernel cpu dlpar is possible. this is wrong, the sysfs dlpar file
+    was added with in-kernel memory hotplug, its existence can only guarantee
+    memory hotplug capability.
+    
+    For now, disable using the in-kernel cpu capabilities by drmgr until
+    this can be resolved.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 2bb7599d702d4e1de1ff0f9cbe53329e59c4e120
+Author: Ian Neal <ian.neal@gmail.com>
+Date:   Mon Jul 11 10:02:45 2016 -0400
+
+    lparstat: flush data to stdout
+    
+    The stdout stream is not being flushed after being written to.  This
+    means that it doesn't behave properly in shell pipelines as the data
+    isn't visible until the program exits.  The fix is to simply flush
+    after writes so the data is immediately available to other processes
+    in the pipeline.
+    
+    Signed-off-by: Ian Neal <ian.neal@gmail.com>
+
+commit c3269d4e3d4882fd931d1df6aece0bec86fb6734
+Author: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+Date:   Thu Jun 30 10:26:58 2016 -0400
+
+    update_flash: Fix bashism issue in opp_display_current_fw_version()
+    
+    Ubuntu uses dash, not bash. We hit below warning on Ubuntu system.
+    
+    root@abc:/sys/firmware/devicetree/base/ibm,opal/sensors# update_flash -d
+    /usr/sbin/update_flash_nv: 595: [: x43: unexpected operator
+    Firmware version:
+    ....
+    ....
+    
+    == is a bashism. Replace it with =.
+    
+    Fixes: 767e3dd7 (update_flash: Add support for OpenPower system)
+    Signed-off-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+
+commit 386a07c4dc6c09d35116dc6064f7a83d76f4415b
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue May 24 16:32:39 2016 -0400
+
+    errinjct: Correct read_file() error checking
+    
+    When reading files from syfs the file length returned from a stat()
+    call does not always match the actual length of the file. The read_file()
+    routine should be checking for an error return from the read() call
+    instead of checking that the amount read matches the file length returned
+    from a stat() call.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 42b83884bfb51c0c8b23bf2949157430f8468caa
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue May 24 16:31:37 2016 -0400
+
+    errinjct: Recognize -5 return from rtas
+    
+    Update the errinjct command to recognize the rturn code of -5 from
+    rtas indicating that PCI error injection is not enabled.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit ab848a8d5cc4c4b9f5faef1b31be3982fb7d4bf2
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue May 24 16:30:33 2016 -0400
+
+    errinjct: Correct config_addr parsing
+    
+    A recent patch (commit id: ccc9c72cec2a4) to move the errinjct function to
+    using a common read_file() routine did not correctly update the
+    get_config_addr_from_reg() function. This patch corrects this to return the
+    proper config address.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 9fc079cf39d999040483a00d3b41000ca3e43013
+Author: John Allen <jallen@linux.vnet.ibm.com>
+Date:   Tue May 24 16:28:27 2016 -0400
+
+    drmgr: Workaround for concurrent PRRN collisions
+    
+    Proposed workaround for issues with current PRRN event handling mechanism.
+    
+    Currently, the mechanism works by kicking off a script that calls a drmgr
+    remove followed by a drmgr add for each effected device. With this method,
+    problems can occur when multiple prrn events arrive in a short time span or
+    when other dlpar operations are happening while the script is running. What
+    can happen is that these other dlpar operations can jump in inbetween when
+    the script calls the remove and the add and take the drmgr lock. Then when
+    we try to add the memory back from the script, we are unable to take the
+    drmgr lock and the add fails.
+    
+    This patch fixes this issue by creating a new -P flag for drmgr which will
+    perform the necessary removes/adds from within the drmgr lock. The new
+    option will be invoked as follows:
+    
+    drmgr -P <path to prrn log file>
+    
+    On the rtas_errd side, we will begin by creating a log file for the
+    PRRN event which will contain a list of the type and the drc index for
+    each effected device. Then instead of invoking the script, we will call
+    the above drmgr command with the path to the prrn log file. Then, on the
+    drmgr side, we parse the list and perform the necessary removes/adds and
+    then delete the prrn log file.
+    
+    Signed-off-by: John Allen <jallen@linux.vnet.ibm.com>
+
+commit bbc5fc07c54dd53f4ceac3552ea12717cc86cba2
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Wed May 11 13:16:19 2016 -0400
+
+    drmgr: Start using in-kernel DLPAR functionality for cpu/memory
+    
+    Now that the capability to do DLPAR of cpus and memory can be
+    done completely in the kernel, update the drmgr command to use
+    this functionality.
+    
+    The kernel updates provided a sysfs file (/sys/kernel/dlpar)
+    that will allow the drmgr command invoke DLPAR of cpus and memory
+    by writing to this file.
+    
+    There are some exisitng behaviors of drmgr on the PowerVM platforms
+    that require cpu and memory to be done slightly differently. For
+    memory drmgr only needs to report the number of LMBs that were
+    added or removed so drmgr can just pass all requests straight to
+    the kernel. This patch also makes a common routine for reporting
+    memory resources to ensure the format is kept constant.
+    
+    For cpu DLPAR the drmgr command has to report the drc name of each
+    cpu that is added/removed. To do this the command uses much of the
+    same device tree parsing that is currently used and make a request
+    to the kernel to remove a specific cpu (by drc index) where a
+    write to the sysfs probe file was previously done.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 4dafa57ec7c1498f94b324e671625b0794b92f2f
+Author: Thomas Falcon <tlfalcon@linux.vnet.ibm.com>
+Date:   Tue Apr 19 15:01:13 2016 -0400
+
+    ppc64_cpu: display error message after set_smt_state_one failure
+    
+    This avoids a silent error if threads are unable to be onlined or offlined.
+    
+    Signed-off-by: Thomas Falcon <tlfalcon@linux.vnet.ibm.com>
+
+commit 96745e9e1cb560af6f900b1dac920e36db750ee5
+Author: John Allen <jallen@linux.vnet.ibm.com>
+Date:   Tue Apr 19 14:52:35 2016 -0400
+
+    lparstat: Check return value of fopen/popen before dereferencing
+    
+    Checks the return value of fopen and popen in several locations to make sure
+    it's not null. If we pass a null file descriptor to fgets, we will hit a
+    segfault.
+    
+    Signed-off-by: John Allen <jallen@linux.vnet.ibm.com>
+    Reviewed-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+
+commit 6855b92b3f9f3ed9c02065344cc98b965c3f03ef
+Author: Michael Roth <mdroth@linux.vnet.ibm.com>
+Date:   Tue Apr 19 14:49:43 2016 -0400
+
+    drmgr: avoid loading rpadlpar_io/rpaphp when -v flags is used
+    
+    The -v / opts->pci_virtio flag was added to provide an alternative way
+    to scan/remove PCI devices which doesn't rely on rpaphp. That was a
+    workaround for a bug induced by QEMU emulating PHBs with multiple
+    hotpluggable slots, which fails to register slots beyond the first due
+    to rpaphp no longer accounting for the possibility of there being more
+    than 1 slot per PHB. This leads to warnings of the form:
+    
+      kernel: rpaphp: pci_hp_register failed with error -16
+      kernel: rpaphp: pci_hp_register failed with error -16
+      ...
+    
+    For most guest distros this has resulted in the module not being
+    loaded by default to avoid the errors showing up.
+    
+    However, as of a9b4e4e, we now load automatically load the module as
+    needed, but we don't take opts->pci_virtio into account when
+    determining if it's needed, leading to PCI hotplug operations to
+    KVM guests now resulting into rpaphp being loaded and
+    generating the errors above when drmgr is invoked.
+    
+    Fix this by avoiding modprobe of rpadlpar_io/rpaphp when
+    opts->pci_virtio is set.
+    
+    Signed-off-by: Michael Roth <mdroth@linux.vnet.ibm.com>
+
+commit efa87d93231eb0fe4f406bf58e7d5aa783ee4f13
+Author: Michael Bringmann <mwb@linux.vnet.ibm.com>
+Date:   Tue Apr 19 14:47:32 2016 -0400
+
+    lparstat: Correct presentation of some stats
+    
+    lparstat.c: Currently there are several problems with the presentation
+    of statistics by lparstat's default output mode.  These issues include:
+     * Showing negative values for certain fields e.g. %user, %sys, %wait,
+       %lbusy.
+     * Showing zero values for certain fields e.g. physc, %entc
+     * Identifying systems with 'Shared' or 'Dedicated' Memory Mode
+     * Calculating the number if logical CPUs used by a system
+    This patch looks to correct these issues.  It also changes the widths
+    of the physc, %entc fields which had too little precision available
+    to show the value change on some systems.
+    
+    Signed-off-by: Michael Bringmann <mwb@linux.vnet.ibm.com>
+
+commit a27c639aca69271aabe7cac287f998b29b82f333
+Author: Michael Roth <mdroth@linux.vnet.ibm.com>
+Date:   Tue Apr 19 14:37:36 2016 -0400
+
+    drmgr: ensure PCI cleanup is done before offlining dev
+    
+    As part of 4f542616, functionality was added to support add/remove
+    PCI devices without relying on rpaphp hotplug module. The sysfs
+    write used in the remove path initiates an asynchronous removal of
+    PCI device from kernel PCI subsystem, and eventually from the sysfs
+    tree. Afterward, we set the corresponding DRC for the device to
+    ISOLATED state so host can complete device removal.
+    
+    To avoid the situation where the asychronous removal has not yet
+    completed by the time drmgr sets the state to ISOLATED, and simple
+    sleep of 3 seconds was added. This seems to have worked out okay
+    for virtio devices, but in the case of other devices, like PCI
+    passthrough of a Mellanox CX4 virtual function, the removal can take
+    up to 20 seconds.
+    
+    When this happens, we hit a situation where the host reclaims the
+    devices while the guest is still attempting to access it in it's
+    cleanup path, which leads to guest crashes.
+    
+    Fix this by polling the PCI devices sysfs path and not completing
+    the removal until the sysfs path is removed as part of device cleanup.
+    
+    Signed-off-by: Michael Roth <mdroth@linux.vnet.ibm.com>
+
+
+powerpc-utils-1.3.1
+=====================================================================
+commit dccad2d1dc5c84571f31af3117095bd9ec6e34c4
+Author: Brahadambal Srinivasan <latha@linux.vnet.ibm.com>
+Date:   Fri Mar 25 07:46:56 2016 -0400
+
+    snap: PowerNV platform is not correctly checked
+    
+    Recent patches to change from PowerKVM to PowerNV missed a
+    simple change to the /usr/sbin/snap script. This patch is to
+    fix that.
+    
+    Signed-off-by: Brahadambal Srinivasan <latha@linux.vnet.ibm.com>
+
+commit a9b4e4ed7c6a908feb04f5b066f214ad14c76745
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Fri Mar 25 07:45:20 2016 -0400
+
+    drmgr: Load kernel modules for pci hotplug
+    
+    For PHB DLPAR, slot DLPAR, and PCI hotplug operations we need to ensure
+    that the rpadlpar_io and rpaphp kernel modules are loaded or have been
+    built into the kernel. A check for this is currently done for PHB and
+    slot DLPAR when determining if the system is capable of these operations.
+    
+    This patch moves the code to validate the presence of these modules
+    to be called from dr_init() for PHB/SLOT/PCI operations. In order
+    to do this the parsing of args has to be done prior to calling dr_init.
+    This should not cause an issue since we can parse args without holding
+    the dr_lock and any errors are written to stderr.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit c66dfa6338e6bb889f4806df1518642a800992ea
+Author: John Allen <jallen@linux.vnet.ibm.com>
+Date:   Fri Mar 25 07:43:39 2016 -0400
+
+    lsslot: Update man page/usage statement to document required argument
+    
+    Update man page and usage statement for lsslot to reflect the fact that
+    the -d flag requires an argument.
+    
+    Signed-off-by: John Allen <jallen@linux.vnet.ibm.com>
+
+commit bd7e19a9ff5aebe741b0520906660dac1ecf4a2a
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Fri Mar 25 07:27:58 2016 -0400
+
+    nvram: Correct valid partition name checking
+    
+    A recent update to not allow long names had a bug in that it did
+    not correctly check the return value when verifying a partition name.
+    
+    Fixes: b15b0a7f9ffc (nvram: don't allow long names)
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+    CC: Joel Stanley <joel@jms.id.au>
+
+commit 63a362d28253e32552ff3e1e4358bfb47d69c78b
+Author: Mauricio Faria de Oliveira <mauricfo@linux.vnet.ibm.com>
+Date:   Thu Mar 17 20:01:06 2016 -0400
+
+    ofpathname: Convert OF device path to logical device path for NVMe devices
+    
+    Add support to convert a Open Firmware device path to logical device path
+    for NVMe devices (with namespace id).
+    
+    Signed-off-by: Mauricio Faria de Oliveira <mauricfo@linux.vnet.ibm.com>
+
+commit bd0a574f70f2b2af39020440e6e3ed61ab5afe35
+Author: Mauricio Faria de Oliveira <mauricfo@linux.vnet.ibm.com>
+Date:   Thu Mar 17 19:59:51 2016 -0400
+
+    ofpathanme: Convert logical device path to OF device path for NVMe devices
+    
+    Add support to convert logical device path to Open firmware device path
+    for NVMe devices.
+    
+    Signed-off-by: Mauricio Faria de Oliveira <mauricfo@linux.vnet.ibm.com>
+
+commit e4af95a7da425d37a6762b81d1614e648129b36a
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue Feb 23 14:43:35 2016 -0500
+
+    drmgr: free allocated hpdev in error path
+    
+    In error paths while allocating hpdevs in get_os_hp_devices() we
+    can exit without free'ing an allocated hpdev. Move up the addition
+    of the hpdev to the hpdev_list to ensure it is free'ed if an error
+    occurs.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 6fcff4b41726784d9f13bdc905d7eb85f84a3248
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue Feb 23 12:18:12 2016 -0500
+
+    drmgr: close opened dir
+    
+    Close the directory we are traversing before returning.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit faa441c184dfa28bd5793adbd17faa7f696fc49d
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue Feb 23 12:17:03 2016 -0500
+
+    rtas_dbg: Do not exit on failure to read rtas token
+    
+    When gathering a list of the available rtas tokens if we are not able
+    to determine the rtas token value for a token in the device tree we
+    should print an error message and continue instead of exiting.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 64dd69fdc6242ec22519f1d2a18f1328825add3e
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue Feb 23 12:15:53 2016 -0500
+
+    rtas_dbg: Ensure we NULL terminate token names
+    
+    The current code to look up rtas tokens writes the token name
+    to a static buffer size, this runs the risk of not having the
+    string null terminated if the string length matches the buffer
+    length.
+    
+    Update the code to use strdup so we can ensure the strings are
+    null terminated. This also updates the free_rtas_tokens()
+    routine to free the token name.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit ccc9c72cec2a4885a219958c69c35abae6cef9c4
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue Feb 23 12:14:16 2016 -0500
+
+    errinjct: Correct possible buffer overflow
+    
+    In multiple places in the errinjct command we read the contents of
+    a file into a local buffer. This presents a possible issue if the
+    file we are reading ever exceeds the size of the buffer. To prevent
+    this issue a new read_file() routine is introduced that will
+    allocate a buffer large enough to hold the contents of the file and
+    read the file into the buffer.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit fa50467bbf0f83207055124e7bee866cbc1b612c
+Merge: 39dbb91 61558c9
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Feb 15 09:03:26 2016 -0500
+
+    Merge branch 'cyphermox-mpath' into next
+
+commit 61558c9df4571b79c435e2d7b1157f40ae7565a3
+Merge: 39dbb91 2d27304
+Author: Mathieu Trudel-Lapierre <mathieu.trudel-lapierre@canonical.com>
+Date:   Mon Feb 15 08:51:37 2016 -0500
+
+    ofpathanme: map mpath* devices to the appropriate dm-* generic dm device
+    
+    Signed-off-by: Mathieu Trudel-Lapierre <mathieu.trudel-lapierre@canonical.co
+
+commit 39dbb91904e0b94aa5a665d5f84dec736fdbbb07
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Feb 1 11:59:27 2016 -0500
+
+    errinjct: Close file descriptors
+    
+    Properly handle file descriptors opened by ensuring
+    they are closed prior to returning. Reported as a
+    leaked resource by Coverity scans.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+    Reviewed-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+
+commit 07c190715a730dc98823691f18aa3b262a2bf432
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Feb 1 11:57:49 2016 -0500
+
+    errinjct: Null terminate buffer from read()
+    
+    Null terminate buffers filled when calling read(). Issue uncovered
+    with Coverity Scans.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 3153111b0ab6e6ae2b83c448443a3b6e3e8fe6e5
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Feb 1 11:56:02 2016 -0500
+
+    activate_firmware: Remove use of strcat
+    
+    Resolve uninitialized scalar variable reported by Coverity scan.
+    The 'msg' buffer was being used uninitialized in calls to strcat,
+    this patch removes the use of the local 'msg' variable and puts
+    the message string directly in the warnx() call.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+    Reviewed-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+
+commit f3f25d4aee3f12f0dfc6611aaab6f0819d58fe33
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Feb 1 11:53:13 2016 -0500
+
+    ppc64_cpu: free core_state on error
+    
+    Make sure we free the allocated 'core_state', issue found with Coverity.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit e6f476d32c33f5b8e364f930c467785495eeb0ce
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Feb 1 11:51:55 2016 -0500
+
+    lsslot: free lmb_list on error
+    
+    Free the lmb resources allocated by lsslot, Issue discovered with
+    Coverity scan.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 2d27304b9e8f69619927cd2f55fb1c11c3dc5f09
+Author: Mathieu Trudel-Lapierre <mathieu.trudel-lapierre@canonical.com>
+Date:   Tue Jan 12 16:46:12 2016 -0500
+
+    ofpathname: map mpath* devices to the appropriate dm-* generic dm device.
+    
+    Signed-off-by: Mathieu Trudel-Lapierre <mathieu.trudel-lapierre@canonical.com>
+
+powerpc-utils-1.3.0
+=====================================================================
+commit ad4cf85f4bc80f6f5cbf4ce0b71eada696848081
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Thu Jan 7 15:17:41 2016 -0500
+
+    Move the powerpc-utils package from the IBM license to the GNU GPL license.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit f037afe3bcece02ca3a3b1711a57c66db088cfa1
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue Dec 1 16:36:11 2015 -0500
+
+    drmgr: Correct checking for display adapters when adding PHB
+    
+    A previous commit (c2091227) added formalization for checking for display
+    adapters. Unfortunately the update tries to verify if there is a display
+    adapter for a NULL phb pointer when trying to add a PHB resulting in a
+    segfault on phb add requests.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 85a5037cb01c1aaa5ad3dbd91f74dbcdd823dbb1
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue Dec 1 16:35:04 2015 -0500
+
+    drmgr: Remove extraneous debug output
+    
+    Remove extra debug statements for allocating and free'ing drc information.
+    These were mistakenly left in during debug of a previous patch.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 33aa48a0c4ebc4e660080514939232ad2912cb6d
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue Dec 1 16:33:45 2015 -0500
+
+    drmgr: Fix node add buffer overflow
+    
+    When adding a node to the device tree, the drmgr command writes a terminatin
+    null in the first character past the end of the allocated buffer. This
+    results in a SIGABRT being generated by libc when the buffer is free'ed.
+    The fix is to move the writing of the space between properties to the
+    beginning of the loop instead of at the end of the loop.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 55544a975f87e9d76366e6fefcf571ae01f3e7eb
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Nov 23 21:10:27 2015 -0500
+
+    drmgr: Remove extraneous "d" in buffer
+    
+    Remove an erroneous character left in a print statement used
+    to update the drconf property.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit f4006893d84c85bbf5b86919c28ba56047001204
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Nov 23 21:09:47 2015 -0500
+
+    drmgr: Correct return code from set_mem_scn_state()
+    
+    The set_mem_scn_state() routine incorrectly returns the number of chars
+    written in the case of success instead of returning 0. This results in the
+    caller assuming a failure occurred when setting the memroy section state
+    and fails the memory online/offline operation.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 4f515ea179cb36f26adb53c93b79f834e32c2abe
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Nov 23 21:08:54 2015 -0500
+
+    drmgr: Correct LMB counting when discovering LMBs
+    
+    Recent updates to how drmgr counted the number of LMBs found did
+    not save the count value correctly and in the case of LMBs found
+    in the ibm,dynamic-reconfiguration-memory property only counted
+    LMBs that were present. This caused havoc when trying to shuffle
+    the LMBs.
+    
+    Save the LMB count in the lmb_list_head struct so we have it across
+    function calls. Also update the shuffle_lmbs to just take a pointer to
+    the lmb_list_head and make changes locally in the routine.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 9a1957588b040db0dddfa284dbb96a817e699792
+Author: Cédric Le Goater <clg@fr.ibm.com>
+Date:   Mon Nov 23 21:07:17 2015 -0500
+
+    update_flash_nv: improve check_ipmitool
+    
+    This patch adds a quick test in check_ipmitool to make sure the
+    BMC is alive
+    
+    Signed-off-by: Cédric Le Goater <clg@fr.ibm.com>
+
+commit 4e4e5f9f8d16a2ad196d1fd5388de23aa2e1fdbc
+Author: Cédric Le Goater <clg@fr.ibm.com>
+Date:   Mon Nov 23 21:06:52 2015 -0500
+
+    update_flash_nv: fix firmware update sequence for powernv
+    
+    This patch modifies the way the firmware update is performed from
+    the host. It adds a cold reset of the BMC before and after the
+    update.
+    
+    Signed-off-by: Cédric Le Goater <clg@fr.ibm.com>
+
+commit 1f25105c1c7f1384be4aef03f2aa6d5bd065eb11
+Author: Cédric Le Goater <clg@fr.ibm.com>
+Date:   Mon Nov 23 21:06:22 2015 -0500
+
+    update_flash_nv: force the use of the ipmitool usb backend
+    
+    Signed-off-by: Cédric Le Goater <clg@fr.ibm.com>
+
+commit b0e5ba4f55dcf1a5d013eddbb95b660c65504b3c
+Author: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date:   Mon Nov 23 21:04:45 2015 -0500
+
+    ppc64_cpu: output to user if the requested number of cores are not brought o
+    
+    Now that we check the return code from set_one_core, we should ensure
+    that the requested number of cores in --cores-on is achieved, or return
+    -1 intead. Also add a slightly verbose message in that case.
+    
+    Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+
+commit 1a1bb7167a3946712a5b59b5566bac6ced46cdc9
+Author: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date:   Mon Nov 23 21:03:37 2015 -0500
+
+    ppc64_cpu: use rc instead of boolean flag
+    
+    We can overload the rc variable, reducing the number of local variables
+    in do_online_cores.
+    
+    Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+
+commit 37eeba5583d48558f2ca1de6096df83494005e6f
+Author: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date:   Mon Nov 23 21:00:14 2015 -0500
+
+    ppc64_cpu: check return code from set_one_core
+    
+    In both --cores-on and --online-cores, the return code from the helper
+    function set_one_core is not checked. This can lead to ppc64_cpu
+    returning 0 even though the command technically failed to do what was
+    requested. After this patch, --cores-on still doesn't return a proper
+    error code (fixing in a follow-on).
+    
+    Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+
+commit 9711ee00b604a39d47dfced7f0c49cf40600131f
+Author: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date:   Tue Nov 17 16:24:37 2015 -0500
+
+    ppc64_cpu: add --{on,off}line-cores to {on,off}line specific cores
+    
+    We currently have support for a mechanism to ensure an exact number of
+    cores (or all cores after a recent patch submission) are online.
+    However, there is no control over which cores are selected. Add two new
+    options to ppc64_cpu, --online-cores and --offline-cores to support
+    specifying which cores to bring online or offline, respectively. Both
+    options take either no parameters, in which case they output a
+    comma-separated list of cores that are online/offline, or a
+    comma-separated list of cores, in which case the command sets those
+    cores' states to online/offline.
+    
+    Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+
+commit 2239dd005e00d63c6e68fe962928b5f0b08ef6cb
+Author: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date:   Tue Nov 17 09:33:55 2015 -0500
+
+    ppc64_cpu: rename do_cores_online to do_cores_on
+    
+    This matches the other function names more closely.
+    
+    Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+
+commit bb8472f0658565e5188150a141fa8856b55000ca
+Author: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date:   Tue Nov 17 09:31:57 2015 -0500
+
+    ppc64_cpu: add all parameter to --cores-on to online all cores
+    
+    Rather than finding out how many cores are in a system, and then passing
+    that value to --cores-on, it can be handy to have a shortcut to just
+    online all cores.
+    
+    Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+
+commit 17cd4bbf7c20d8096523c765c1157e4a58d31363
+Author: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date:   Tue Nov 17 09:29:06 2015 -0500
+
+    ppc64_cpu: handle errors from strtol in --cores-on parsing
+    
+    Currently, on a 24-core system, passing certain values to `ppc64_cpu
+    --cores-on` leads to some surprising results:
+    
+    ppc64_cpu --cores-on=all
+    ppc64_cpu --cores-on=adfd
+        offlines all but one core
+    
+    This is because we are not using the endptr parameter of strtol to
+    determine if any of the string is consumed (and if none of the string is
+    consumed, strtol still returns a valid long value, namely 0).
+    
+    ppc64_cpu --cores-on=12df
+        onlines 12 cores
+    
+    This is because we are not using the endptr parameter to strtol to
+    determine if the entire string is consumed (checking for trailing
+    characters).
+    
+    Add both these checks.
+    
+    After this patch:
+    
+    ppc64_cpu --cores-on=all
+    Invalid number of cores to online: all
+    ppc64_cpu --cores-on=adfd
+    Invalid number of cores to online: adfd
+    ppc64_cpu --cores-on=12fd
+    Invalid number of cores to online: 12fd
+    
+    Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+
+commit 475919d4294819e5f890f000ccadf5b13280a0a9
+Author: Chandni Verma <chandni@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:50:11 2015 -0500
+
+    powerpc-utils.spec: Fix typo in spec-file
+    
+    In line:
+    %{__rm} -rf $RPM_BULD_ROOT
+    The directory should be RPM_BUILD_ROOT not RPM_BULD_ROOT
+    
+    Signed-off-by: Chandni Verma <chandni@linux.vnet.ibm.com>
+
+commit b1d909378cf8a9502c7207f4f51a2cf3931d5263
+Author: Michael Bringmann <mwb@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:48:30 2015 -0500
+
+    errinjct/rtas_debug: Update RPM packaging specs
+    
+    This patch updates the powerpc-utils.spec.in file to install the binaries
+    associated with errinjct and rtas_dbg.
+    
+    Signed-off-by: Michael Bringmann <mwb@linux.vnet.ibm.com>
+
+commit 03704771a36c025eb8636a90f67eaa77acd5880d
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:40:47 2015 -0500
+
+    lsslot/drmgr: Performance enhancement for parsing LMBs
+
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 268116acde0d5f98efa150044b68d977d578ccb4
+Author: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:39:15 2015 -0500
+
+    errinjct: Add format specificer
+    
+    We hit below build warning with "-Werror=format-security" compilation option
+    
+     CC       src/errinjct/icache.o
+     src/errinjct/errinjct.c: In function 'perr':
+     src/errinjct/errinjct.c:240:18: error: format not a string literal and no f
+       fprintf(stderr, buf);
+                         ^
+    
+    Signed-off-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+
+commit c2091227bdf40192a37456445a6dedf3f3da8cda
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:27:08 2015 -0500
+
+    drmgr: Do not allow DLPAR of display adapters
+    
+    The DLPAR of display adapters has never been supported but that support
+    has not ever been enforced in drmgr. Recent tests show that trying to DLPAR
+    remove a display adapter causes the drmngr command to appear hung as it
+    waits for display adapters to power down.
+    
+    Add the ability to check for a drc-type of 'display' when trying to add
+    or remove a pci or slot, and verify that none of the children under a
+    PHB are display adapters when trying to add or remove a PHB.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit aef0c5daa20f38b66e5fa0255ecf5a53ba202138
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:26:01 2015 -0500
+
+    drmgr: Move check for non-hotplug children to common routine
+    
+    In more than one place we check to see if a PHB has any children that
+    are not hotplug capable. Move this code to common routine.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 2d8ad5ef33948f07e3022c601ee99cd8efc85a76
+Author: Chandni Verma <chandni@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:22:19 2015 -0500
+
+    activate_firmware: Have man page reflect the changes made in this branch
+    
+    -Edited description
+    -added Option section
+    -Added 2 new return codes 7 and 8
+    
+    Signed-off-by: Chandni Verma <chandni@linux.vnet.ibm.com>
+
+commit 11041ab9e8f0e75b58d2c1a593c9c410d7a82f00
+Author: Chandni Verma <chandni@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:21:02 2015 -0500
+
+    activate_fw: Return code 8, to report a parameter error when activating firm
+    
+    This is a new return code mapped from rtas return code -3 which is returned 
+    case of parameter error, when the utility is used without options.
+    
+    Signed-off-by: Chandni Verma <chandni@linux.vnet.ibm.com>
+
+commit d1217de2906f22dbeed54f52c683f28ffcfe90c9
+Author: Chandni Verma <chandni@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:19:56 2015 -0500
+
+    activate_fw: get update access key expiry date, set update access key
+    
+    This patch provides two feature extensions:
+    1. activate_firmware -e
+       (with only -e, fetches the update access key expiry date)
+    2. activate_firmware -e /path/to/keyfile
+       (with an argument to -e applies the provided update access key-file to
+        extend the update access key expiry date)
+    
+    These are required to provide an interface to check validity of and
+    update the Update Access Key. ESA will be one of the users of this tool.
+    
+    Signed-off-by: Chandni Verma <chandni@linux.vnet.ibm.com>
+
+commit 097c16987a65aceb0be6d66befaa0104b518abbd
+Author: Chandni Verma <chandni@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:18:09 2015 -0500
+
+    activate_fw.c: Make use of errx() to print error messages to stderr and exit
+    
+    This is a more compact way to do it compared to using fprintf and explicitly
+    exiting in main()
+    
+    Signed-off-by: Chandni Verma <chandni@linux.vnet.ibm.com>
+
+commit c2dc2191bb5963b09e781b78cbf2a152520c8e87
+Author: Chandni Verma <chandni@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:17:21 2015 -0500
+
+    activate_fw.c: Factor out activate_firmware() from main()
+    
+    This is done to reserve main solely for option processing and to
+    abstract out rtas calling function.
+    
+    Signed-off-by: Chandni Verma <chandni@linux.vnet.ibm.com>
+
+commit 72bc893a5f4b59d0e7742726e85f3cffab65ebd3
+Author: Chandni Verma <chandni@linux.vnet.ibm.com>
+Date:   Mon Nov 16 16:14:46 2015 -0500
+
+    activate_fw: fix typo
+    
+    The default case in error handler should return code 6, not 4.
+    
+    Signed-off-by: Chandni Verma <chandni@linux.vnet.ibm.com>
+
+commit 782445384c165ea28f00c9cb233e41bdeef7a962
+Author: Chandni Verma <chandni@linux.vnet.ibm.com>
+Date:   Mon Nov 16 15:53:42 2015 -0500
+
+    activate_fw: Coding style fixes
+    
+    This patch fixes trailing white spaces and indentation issues
+    and in general makes to code confirm to linux's checkpatch.pl
+    
+    Signed-off-by: Chandni Verma <chandni@linux.vnet.ibm.com>
+
+commit ad93027170afe3b7bc760fed0ab3e078390ba088
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:58:44 2015 -0400
+
+    serv_config: Compile warning cleanups
+    
+    Correct several compile warnings.
+    
+    Remove unchecked return code from execv().
+    Remove unused variables.
+    Correct de-reference of type punned pointers.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 8ad7081b5f1d98593c8192d4d46c10050e5b8d88
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:57:34 2015 -0400
+
+    rtas_ibm_get_vpd: Compile warning cleanups
+    
+    Clean up compile warning by removing the unused lflag variable.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 28aeacd59e0e35753bae243cf63150f6ecc2a10b
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:56:32 2015 -0400
+
+    rtas_dbg: Compile warning cleanups
+    
+    Correct compile errors to check the return value from a fread() call and
+    add an appropriate error message, and ensuring we do not use an
+    uninitialized 'rc' variable.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit dfab2e6f11a11e25da342b703bd054aaf906d818
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:55:33 2015 -0400
+
+    ppc64_cpu: Compile warning cleanups
+    
+    Correct compile warning for dereference of type punned pointer.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 92fd02382fbec464562e2a84841391f09cf1e2ea
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:54:34 2015 -0400
+
+    nvram: Compile warning cleanups
+    
+    Correct compile warning by removing the unused variable memctrl_data.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit f069a159755b70bf4596b2bcce5b3fb4f8c3831f
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:53:35 2015 -0400
+
+    lparstat: Compile warning cleanups
+    
+    Clean up compile warnings by adding checks for the return codes from
+    fgets() calls and adding appropriate error messages.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 2cc2e6590a43a367ee6ca6474bc98cc0a7245caf
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:51:59 2015 -0400
+
+    drmgr: Compile warning cleanups
+    
+    Fix multiple warnings generated when compiling drmgr code. These include
+    not checking return codes of fread() and write() calls where a check is
+    added and appropriate error messages.
+    
+    Updating print formats to use the appropriate type of value being printed.
+    
+    Correcting the use of rc values to ensure the rc variable is set.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 0e8d1534f5bf57798b74584b6f2b42bad57ddf89
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:49:57 2015 -0400
+
+    drmgr: Validate the status of a CPU before adding or removing it
+    
+    When asked to perform a CPU DLPAR operation we should verify the current
+    status of the CPU before performing the operation. Failure to verify the
+    status has caused the kernel to oops in cases where we try to add a CPU
+    that is already owned, namely in a kvm guest the following is seen.
+
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit dabc0264a9f3b64226da63421378ed02f2f1b201
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:48:25 2015 -0400
+
+    drmgr: Add missing free's of allocated memory
+    
+    Using valgrind to do analysis of the memory usage of the drmgr command
+    revealed multiple instances of memory not being free'ed. Correct this
+    by adding appropriate calls to free commands.
+    
+    Note that the analysis done, and this patch, does not cover all of the code
+    paths in drmgr. There may be additional patches as testing continues.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit d5a1c1bfae839e159ba049736a9719835e2a42e6
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:45:26 2015 -0400
+
+    drmgr: Add EXTRA_DEBUG output level
+    
+    Introduce a new internal developer debug output level. In some cases the
+    drmgr command dumps all the information about slots/adapters it gathers
+    from the device tree, this is really meant for internal debugging purposes.
+    Additionally, one large systems this information can easily overwhelm
+    the output seen from drmgr.
+    
+    This patches introduces a debug level for the say() command, EXTRA_DEBUG.
+    Developers can get this output by using the option '-d 5'. Several
+    instances of debug output are also updated to use this new option.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit a7ebbd4bbc61cd0c7d6c3c3eea9f7ea9724558d9
+Author: Nathan Fontenot <nfont@linux.vnet.ibnm.com>
+Date:   Tue Oct 27 16:43:25 2015 -0400
+
+    drmgr: free slot nodes before adding slots
+    
+    When handling a request for slot dlpar add the device tree is parsed twice,
+    once prior to the add and again after adding the slot. On systems with a
+    large number of slot devices, 200+, we are seeing that the drmgr command
+    segfaults when trying to parse the device tree the second time.
+
+    To avoid crashing here we need to free the parsed information from the
+    device tree prior to adding the new slot. While this isn't really a true
+    root cause fix it does alloow drmgr to run without segfaulting.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 767e3dd780f1a18b2c832b5d8db82a5aac9a9818
+Author: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+Date:   Fri Oct 16 10:01:50 2015 -0400
+
+    update_flash: Add support for OpenPower system
+    
+    On OpenPower system we use IPMI interface to pass image to service processor
+    (BMC) and it will take care of updating FW.
+    
+    This patch adds wrapper around ipmitool so that we can use update_flash
+    command to update FW.
+    
+    Validation:
+      BMC take care of validating image. We just pass the image to BMC.
+    
+    Commit/Reject operation:
+      Like FSP system, BMC has two sides. Golden and boot side. Golden side
+      is permanent and is never updated in the field. So commit/reject
+      operations are not allowed on BMC based system.
+    
+    FW update:
+      OpenPower system has two components (BMC FW and host FW). We send all
+      the component to BMC in one command. BMC will take care of updating
+      all the components.
+      Note that we are not using "force" option. So BMC will skip the component
+      which are not changed.
+    
+    FW version display:
+      We display host FW version using ipmitool fru command. like below:
+        Product Name          : OpenPOWER Firmware
+        Product Version       : IBM-firestone-ibm-OP8_PFD_v1.6_0.29
+        Product Extra         : hostboot-6847d73-b8d7c0a
+        Product Extra         : occ-0726e69
+        Product Extra         : skiboot-5.1.3-6221bd2
+        Product Extra         : hostboot-binaries-43d5a59
+        Product Extra         : firestone-xml-db1a93e-4ae8032
+        Product Extra         : capp-ucode-105cb8f
+    
+    Signed-off-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+
+commit 1422abed03f78866339a7b29e3eba4b2d29cb468
+Author: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+Date:   Fri Oct 16 10:01:04 2015 -0400
+
+    update_flash_nv: Add platform check
+    
+    Presently we assume this script is running on FSP based PowerNV platform.
+    Lets add platform check to validate platform before running. That way
+    adding new platform support (like OpenPower) becomes easy.
+    
+    Signed-off-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+    Reviewed-by: Kamalesh Babulal <kamalesh@linux.vnet.ibm.com>
+
+commit b7d4678e0963ff4956d02188fae33cb8d5a7fe11
+Author: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+Date:   Fri Oct 16 10:00:28 2015 -0400
+
+    update_flash_nv: Rename function name to reflect platform
+    
+    Presently update_flash_nv supports code update on FSP based PowerNV
+    (Non-Virtualized) platform. We want to support code update on OpenPower
+    (BMC based) platform. Code update procedure on OpenPower system is
+    different than FSP based machine. Hence rename FSP specific function
+    in this script as fsp_*.
+    
+    Signed-off-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+    Reviewed-by: Kamalesh Babulal <kamalesh@linux.vnet.ibm.com>
+
+commit a3e1c3eddb6e3486ae48dfd23f0c95c4b714322d
+Author: Kamalesh Babulal <kamalesh@linux.vnet.ibm.com>
+Date:   Fri Oct 16 09:59:06 2015 -0400
+
+    snap: Warn users about deprecated support for SLES 12 onwards
+    
+    This patch introduce deprecated warning on SLES 12 onwards
+    to use supportconfig. supportconfig captures all the information
+    collected by snap, so it safe to deprecate snap.
+    
+    It also rearranges check for distribution (RHEL/SLES/Ubuntu) into
+    common function check_distro_support().
+    
+    Signed-off-by: Kamalesh Babulal <kamalesh@linux.vnet.ibm.com>
+    Cc: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+    Cc: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+powerpc-utils-1.2.27
+=====================================================================
+commit 8e22e19dab80a1d17ca5ad5cdf112148282223eb
+Author: John Allen <jallen@linux.vnet.ibm.com>
+Date:   Tue Sep 29 14:41:14 2015 -0400
+
+    errinjct/rtas_dbg: Update Makefile
+    
+    This patch updates the Makefile to include errinjct and rtas_dbg.
+    
+    Signed-off-by: John Allen <jallen@linux.vnet.ibm.com>
+
+commit ef5f204ca2d5de67ef47de1ac29169e7e39b54a6
+Author: John Allen <jallen@linux.vnet.ibm.com>
+Date:   Tue Sep 29 14:37:12 2015 -0400
+
+    rtas_dbg: Initial contribution of the rtas_dbg tool
+    
+    This patch contributes the previously IBM internal rtas_dbg tool. The rtas_d
+    tool enables rtas debug output to the system console for a given rtas call.
+    This version of the code is functionally identical to the old internal versi
+    but I have made some superficial changes to remove IBM confidential informat
+    and improve coding style.
+    
+    Signed-off-by: John Allen <jallen@linux.vnet.ibm.com>
+
+commit 784885efc522d49e29c3f1fb679a31e7ba9b413d
+Author: John Allen <jallen@linux.vnet.ibm.com>
+Date:   Tue Sep 29 14:35:14 2015 -0400
+
+    errinjct: Initial contribution of errinjct tool
+    
+    This patch contributes the previously IBM internal errinjct tool. The errinj
+    tool is used to inject artificial hardware errors into a system. This versio
+    of the code is functionally identical to the old internal version, but I hav
+    made some superficial changes to remove IBM confidential information and
+    improve coding style.
+    
+    Changes in v2: Now checks for platform. If a user is not on a PowerVM system
+    the tool exits and prints a descriptive error message. Updated the man page 
+    document lack of support for non-PowerVM systems.
+    
+    Signed-off-by: John Allen <jallen@linux.vnet.ibm.com>
+
+commit 16e49f436470d597bb29656ed02b40fcdf47fcc5
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Wed Sep 9 10:30:53 2015 -0400
+
+    lparstat: print "Shared Physical CPUS in system" data
+    
+    The information for "Shared Physical CPUS in system" is not printed when
+    the lparstat command is run. This patch adds this information to the list
+    of items to print and modifies the name to match the output of the lparstat
+    command on other OS'es.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 4153cccdc21a0c8810aab169fb5b04a611c7b154
+Author: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Date:   Tue Sep 8 11:38:35 2015 -0400
+
+    drmgr: Don't return unsuable CPU from get_available_cpu()
+    
+    From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+    
+    When querying CPU by name or index (and not count), let
+    get_available_cpu() return NULL for CPU that is marked as unusable.
+    This will prevent the callers (eg. add_cpus()) from infinitely
+    querying for the same CPU.
+    
+    Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+commit d291c43e4ad1141591008e39e77549a6fd33d48a
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Tue Sep 8 11:35:09 2015 -0400
+
+    drmgr: Generate error message when PHB is not found
+    
+    An error message should be generated when drmgr is asked to remove a PHB
+    that does not exist. The current behavior is to just exit without any
+    message.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 8ff5144da07985cd84508465007f9031840d4ecd
+Author: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+Date:   Tue Sep 8 11:33:24 2015 -0400
+
+    update_flash: Stop kexec service before starting firmware update on PowerVM 
+    
+    We run 'reboot' call before initiating firmware update. If kexec service
+    is enabled, then we endup booting into new kernel instead of starting
+    firmware update.
+    
+    Commit 62dc6d38 fix this issue on PowerNV platform.. but missed to fix
+    PowerVM LPAR.  This patch fixes above described issue on PowerVM LPAR.
+    
+    Signed-off-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+
+commit 7a94345ff14fbb6d18a885616a5a7f347daa95f1
+Author: John Allen <jallen@linux.vnet.ibm.com>
+Date:   Wed Sep 2 12:43:15 2015 -0400
+
+    drmgr: Fix file leak in dr_lock/dr_unlock interaction
+    
+    This patch fixes a file leak in dr_lock(). The file descriptor
+    is meant to be saved to a global variable dr_lock_fd, but we
+    have an extraneous local variable named dr_lock_fd as well. So
+    When we get to dr_unlock, the global file descriptor that it
+    tries to close was never set and quietly fails.
+    
+    Signed-off-by: John Allen <jallen@linux.vnet.ibm.com>
+
+commit 29b8f317985249912b4025f704aae16811ea1775
+Author: Boqun Feng <boqun.feng@linux.vnet.ibm.com>
+Date:   Wed Sep 2 12:19:54 2015 -0400
+
+    drmgr: handle read failures in get_att_prop()
+    
+    In get_att_prop(), though rarely, reading from /proc or /sysfs may
+    fail. This patch handles failures of these readings based on the fact,
+    if we successfully read the property, both fread() and fscanf() will
+    return 1. This patch also updates the fread() path so that we only
+    try to read the size of the file and not the size of the buffer
+    passed in.
+    
+    This can also fix the compiler WARNING saying that 'rc' is unused
+    variable.
+    
+    Signed-off-by: Boqun Feng <boqun.feng@linux.vnet.ibm.com>
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 9b8a3b449de4508adca248631e7ffda62a9a4994
+Author: John Allen <jallen@linux.vnet.ibm.com>
+Date:   Wed Sep 2 12:14:09 2015 -0400
+
+    drmgr, ppc64_cpu: Fix several memory/file leaks
+    
+    This patch fixes a few resource leak problems discoverd through
+    static analysis.
+    
+    Signed-off-by: John Allen <jallen@linux.vnet.ibm.com>
+
+commit 5fee10ac758e16d49e42d5cf0855df44b1f90a7a
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Wed Sep 2 11:03:28 2015 -0400
+
+    drmgr: Combine the init_node() and examine_child() routines
+    
+    The complexity of the init_node() and examine_child() routines that call
+    each other recursively is causing drmgr to segfault in odd and sometimes
+    slightly differing ways. Each instance does involve drmgr segfaulting in
+    libc malloc code.
+    
+    This patch re-writes these two routines to combine them into a single
+    routine that is called recursively. The result is cleaner code that no
+    longer segfaults.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 96a83ab8b84576517a28bc8f4d8e684e6c86befd
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Wed Sep 2 10:36:25 2015 -0400
+
+    drmgr: Allocate workarea memory instead of using stack
+    
+    The configure_connector() routine declares a 4K buffer on the stack, this
+    is causing odd behaviors in drmgr such as segfaults in libc malloc code.
+    The workarea should be malloc()'ed instead of being on the stack.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+
+commit 62dc6d38de177588f205e01cec15b93b3e2b9a30
+Author: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+Date:   Wed Sep 2 10:26:23 2015 -0400
+
+    update_flash: Stop kexec service before starting firmware update
+    
+    We run 'reboot' call before initiating firmware update. If kexec service
+    is enabled, then we endup booting into new kernel instead of starting
+    firmware update.
+    
+    This patch validates kexec service and if required stops this service
+    before starting code update.
+    
+    Sample output:
+      update_flash -v -f /home/hegdevasant/01SV840_032_032.img
+      info: Current fixpack level is unknown.
+    
+      Projected Flash Update Results:
+      Current T Image: UNKNOWN
+      Current P Image: SV840_031
+      New T Image:     SV840_032
+      New P Image:     SV840_031
+    
+      info: kexec service is running. It will be stopped before flashing.
+    
+    Signed-off-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+
+commit 546174be41c74894126414515644888ed8b31584
+Author: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+Date:   Wed Sep 2 10:23:21 2015 -0400
+
+    update_flash: Fix bad variable issue
+    
+    Shells like dash throws error if we try to assign string with space
+    without double quote. ex:
+     local bug=ML FW830.00 FW830.00
+    
+    Sample output without this patch:
+      update_flash -f 01SV840_016_016.img
+      /usr/sbin/update_flash: 185: local: FW830.00: bad variable name
+    
+    This patch fixes above issue by covering all string assignment with
+    double quote.
+    
+    sample output with patch:
+      info: Current Temporary side will be committed to
+      Permanent side before being replaced with the new
+      image.
+    
+      Projected Flash Update Results:
+      Current T Image: SV840_031
+      Current P Image: SV840_027
+      New T Image:     SV840_032
+      New P Image:     SV840_031
+    
+    Signed-off-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+
+commit 2d9c67ba3a0763b152be184f81841a6b8ea5580d
+Author: Boqun Feng <boqun.feng@linux.vnet.ibm.com>
+Date:   Wed Aug 26 12:13:41 2015 -0400
+
+    In cpu_index_to_path(), sometimes 'rc' may not be assigned to a certain
+    value, so we need to give 'rc' an initial value, as we may only success
+    if we find a path, so 'rc' is initialized to -1, which indicates
+    failure.
+    
+    Signed-off-by: Boqun Feng <boqun.feng@linux.vnet.ibm.com>
+
+commit b31215f78806bf0b511e39b3c76fc1b12234310a
+Author: Boqun Feng <boqun.feng@linux.vnet.ibm.com>
+Date:   Wed Aug 26 10:50:30 2015 -0400
+
+    In say(), we use variable 'rc' for the return value of write(), however
+    that return value is never used, though rarely, writting to log_fd may not
+    results in writting exact number of bytes we want. To be aware of the
+    return value of write() and also to remove unused variables, we update
+    'len' to the return value of write() if log_fd is not NULL.
+    
+    Signed-off-by: Boqun Feng <boqun.feng@linux.vnet.ibm.com>
+
+commit 8b654c544f5e6243df1a3694162dc466023b39c4
+Author: Kamalesh Babulal <kamalesh@linux.vnet.ibm.com>
+Date:   Wed Aug 26 10:48:30 2015 -0400
+
+    Fix trivial spelling mistakes and trailing white spaces.
+    'avaiable' -> 'available'
+    'parmaeter' -> 'parameter'
+    'intialize' -> 'initialize'
+    
+    Signed-off-by: Kamalesh Babulal <kamalesh@linux.vnet.ibm.com>
+
+commit f768e8c6465185255142cdfb0577bd3ed729494a
+Author: Joel Stanley <joel@jms.id.au>
+Date:   Mon Jun 29 11:07:28 2015 -0400
+
+    lsslot: Fix missing header for __be32 types
+    
+    On my system (Ubuntu 15.04) lsslot does not build as it's missing the
+    __be32 types.
+    
+     src/drmgr/lsslot.c: In function ‘print_drconf_mem’:
+     src/drmgr/lsslot.c:712:2: error: unknown type name ‘__be32’
+       __be32 *aa;
+    
+    Signed-off-by: Joel Stanley <joel@jms.id.au>
+
+commit b15b0a7f9ffcd1bc099a166723475bb53bc945cf
+Author: Joel Stanley <joel@jms.id.au>
+Date:   Mon Jun 29 11:04:24 2015 -0400
+
+    nvram: don't allow long names
+    
+    The maximum partition name length is 12 characters but nvram accepts
+    strings of any length. This change will enforce the maximum length
+    passed to options that take a partition name to avoid confusion.
+    
+    Signed-off-by: Joel Stanley <joel@jms.id.au>
+
+commit 9adb99b0490ca249ef1f2edfefe58d1369e2a278
+Author: Joel Stanley <joel@jms.id.au>
+Date:   Mon Jun 29 11:03:19 2015 -0400
+
+    nvram: fix stack overflow in logging function
+    
+    Signed-off-by: Joel Stanley <joel@jms.id.au>
+
+commit cfce8ea751cd7d87554e59197e8e0c8ab78a8a70
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Jun 29 11:00:20 2015 -0400
+
+    ppc64_cpu: Use calloc for array allocation
+    
+    Use calloc instead of malloc + memset for array allocation.
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+    Reviewed-by: Vasant Hegde <hegdevasant@linux.vnet.ibm.com>
+
+commit b9af10826189fceaa0dd714e793c4753f8241eda
+Author: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+Date:   Mon Jun 29 10:58:52 2015 -0400
+
+    ppc64_cpu: Correct pthread handling for exiting threads
+    
+    The pthread handling for checking cpu frequency in the ppc64_cpu
+    command does not properly handle 'soak' threads exiting from a failed
+    sched_setaffinity call.
+    
+    We need to update the number of threads handled to be dynamically set
+    instead of defining MAX_NR_CPUS, which is out of date. We also need to
+    check for 'soak' threads that have exited before reading the perf counters
+    
+    Signed-off-by: Nathan Fontenot <nfont@linux.vnet.ibm.com>
+

@@ -1,0 +1,86 @@
+#! /bin/bash
+
+# Copyright (c) 2010 International Business Machines
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+#
+# Author Brian King <brking@linux.vnet.ibm.com>
+#
+# ls-vscsi - This utility provides the HMC or IVM with name information for
+# 	     virtual scsi devices
+#
+
+LSVSCSI="ls-vscsi"
+VERSION="0.1"
+CAT="/bin/cat"
+LS="/bin/ls"
+SED="/bin/sed"
+PSERIES_PLATFORM=$(dirname $0)/pseries_platform
+
+usage()
+{
+    echo "Usage: $LSVSCSI"
+    echo "Provide information on Virtual devices"
+	echo ""
+	echo "Optional arguments."
+	echo "  -V  Display version information and exit"
+	echo "  -h  Display this help information and exit"
+	echo ""
+}
+
+show_version()
+{
+    echo "$LSVSCSI: Version $VERSION"
+    echo "Written by: Brian King <brking@linux.vnet.ibm.com>"
+}
+
+. $PSERIES_PLATFORM
+if [[ $platform != $PLATFORM_PSERIES_LPAR ]]; then
+     echo "$LSVSCSI: is not supported on the $platform_name platform"
+     exit 1
+fi
+
+while getopts ":Vh" flag ; do
+    case "$flag" in
+
+        V) show_version
+                        exit 0 ;;
+
+        h)              usage
+                        exit 0 ;;
+        \?)             usage
+                        exit 1 ;;
+    esac
+done
+
+
+# Look at every ibmvscsi (Virtual SCSI) device
+for dev in $($LS -d /proc/device-tree/vdevice/v-scsi* 2> /dev/null) ; do
+    # pull the physical location
+    physloc=$($CAT $dev/ibm,loc-code)
+
+    # find the slot so it can be used in sysfs
+    slot=$(echo $dev | $SED -e "s/\/proc\/device-tree\/vdevice\/v-scsi@//")
+
+    # there is only one host per device, assign it to the path's name
+    for host in $($LS -d /sys/devices/vio/$slot/host*) ; do
+	name=$(echo $host | $SED -e "s/.*\///")
+	echo "$name $physloc"
+    done
+done
+
+exit 0
+
+# end
