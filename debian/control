@@ -1,7 +1,7 @@
 Source: powerpc-utils
 Section: utils
 Priority: important
-Maintainer: Adam Conrad <adconrad@0c3.net>
+Maintainer: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
 Uploaders: Frederic Bonnard <frederic@fr.ibm.com>
 Build-Depends: debhelper (>= 9), dh-autoreconf, librtas-dev, librtasevent-dev, zlib1g-dev
 Standards-Version: 3.9.7
