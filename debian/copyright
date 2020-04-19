@@ -3,7 +3,7 @@ Upstream-Name: powerpc-utils
 Source: https://github.com/nfont/powerpc-utils/releases
 
 Files: *
-Copyright: Copyright 1997-2016 International Business Machines
+Copyright: Copyright 1997-2019 International Business Machines
 License: GPL-2+
 
 Files: src/lsprop.c
@@ -12,6 +12,7 @@ License: GPL-2+
 
 Files: debian/*
 Copyright: Copyright 2014-2016 Adam Conrad <adconrad@0c3.net>
+           Copyright 2020 John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
 License: GPL-2+
 
 License: GPL-2+
