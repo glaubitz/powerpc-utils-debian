@@ -1,3 +1,21 @@
+powerpc-utils (1.3.7-1) unstable; urgency=medium
+
+  * New upstream release (closes: #907594, #916746)
+  * Set myself as maintainer in debian/control (closes: #956952)
+  * Add Vcs-* fields to debian/control
+  * Drop all patches from previous package version
+  * Update patch to fix path prefix for udevadm in ofpathname
+  * Add partition support for IDE and SCSI disks
+    in ofpathname (closes: #405337)
+  * Add patch to add support for SATA plug IDs in ofpathname
+  * Add patch to add support for Apple PowerMacs
+    in ofpathname (closes: #882076)
+  * Update debhelper compatibility level to 12 in debian/compat
+  * Update authors and years in debian/copyright
+  * Update Standards-Version to 4.5.0 in debian/control
+
+ -- John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>  Sun, 19 Apr 2020 18:54:52 +0200
+
 powerpc-utils (1.3.2-1.1) unstable; urgency=medium
 
   * Non-maintainer upload.
