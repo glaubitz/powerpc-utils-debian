@@ -1,3 +1,12 @@
+powerpc-utils (1.3.8-1) unstable; urgency=medium
+
+  * New upstream release
+  * Drop debian/patches for old upstream version, all merged upstream
+  * Add patch to change udvadm program path from /usr/bin to /bin
+  * Update debhelper version to 12 and switch to debhelper-compat
+
+ -- John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>  Sun, 01 Nov 2020 20:54:59 +0100
+
 powerpc-utils (1.3.7-1) unstable; urgency=medium
 
   * New upstream release (closes: #907594, #916746)
