@@ -27,16 +27,28 @@
 #include <string.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sched.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include "lparstat.h"
 #include "pseries_platform.h"
+#include "cpu_info_helpers.h"
 
 #define LPARCFG_FILE	"/proc/ppc64/lparcfg"
 #define SE_NOT_FOUND	"???"
 #define SE_NOT_VALID	"-"
 
 static bool o_legacy = false;
+static bool o_scaled = false;
+
+static int threads_per_cpu;
+static int cpus_in_system;
+static int threads_in_system;
+
+static cpu_sysfs_fd *cpu_sysfs_fds;
+static cpu_set_t *online_cpus;
 
 struct sysentry *get_sysentry(char *name)
 {
@@ -73,6 +85,167 @@ void get_sysdata(char *name, char **descr, char *value)
 	*descr = se->descr;
 }
 
+static int is_smt_capable(void)
+{
+	return __is_smt_capable(threads_per_cpu);
+}
+
+static int parse_smt_state(void)
+{
+	return __do_smt(false, cpus_in_system, threads_per_cpu, false);
+}
+
+static int get_one_smt_state(int core)
+{
+	return __get_one_smt_state(core, threads_per_cpu);
+}
+
+static int assign_read_fd(const char *path)
+{
+	int rc = 0;
+
+	rc = access(path, R_OK);
+	if (rc)
+		return -1;
+
+	rc = open(path, O_RDONLY);
+	return rc;
+}
+
+static void close_cpu_sysfs_fds(int threads_in_system)
+{
+	int i;
+
+	for (i = 0; i < threads_in_system && cpu_sysfs_fds[i].spurr; i++) {
+		close(cpu_sysfs_fds[i].spurr);
+		close(cpu_sysfs_fds[i].idle_purr);
+		close(cpu_sysfs_fds[i].idle_spurr);
+	}
+
+	free(cpu_sysfs_fds);
+}
+
+static int assign_cpu_sysfs_fds(int threads_in_system)
+{
+	int cpu_idx, i;
+	char sysfs_file_path[SYSFS_PATH_MAX];
+
+	cpu_sysfs_fds =
+		(cpu_sysfs_fd*)calloc(sizeof(cpu_sysfs_fd), threads_in_system);
+	if (!cpu_sysfs_fds) {
+		fprintf(stderr, "Failed to allocate memory for sysfs file descriptors\n");
+		return -1;
+	}
+
+	for (cpu_idx = 0, i = 0; i < threads_in_system; i++) {
+		if (!cpu_online(i))
+			continue;
+
+		cpu_sysfs_fds[cpu_idx].cpu = i;
+
+		snprintf(sysfs_file_path, SYSFS_PATH_MAX, SYSFS_PERCPU_SPURR, i);
+		cpu_sysfs_fds[cpu_idx].spurr = assign_read_fd(sysfs_file_path);
+		if (cpu_sysfs_fds[cpu_idx].spurr == -1)
+			goto error;
+
+		snprintf(sysfs_file_path, SYSFS_PATH_MAX, SYSFS_PERCPU_IDLE_PURR, i);
+		cpu_sysfs_fds[cpu_idx].idle_purr = assign_read_fd(sysfs_file_path);
+		if (cpu_sysfs_fds[cpu_idx].idle_purr == -1)
+			goto error;
+
+		snprintf(sysfs_file_path, SYSFS_PATH_MAX, SYSFS_PERCPU_IDLE_SPURR, i);
+		cpu_sysfs_fds[cpu_idx].idle_spurr = assign_read_fd(sysfs_file_path);
+		if (cpu_sysfs_fds[cpu_idx].idle_spurr == -1)
+			goto error;
+
+		cpu_idx++;
+	}
+
+	return 0;
+error:
+	fprintf(stderr, "Failed to open %s\n", sysfs_file_path);
+	close_cpu_sysfs_fds(threads_in_system);
+	return -1;
+}
+
+int parse_sysfs_values(void)
+{
+	unsigned long long spurr, idle_spurr, idle_purr, value;
+	char line[SYSDATA_VALUE_SZ];
+	struct sysentry *se;
+	int i, rc;
+
+	spurr = idle_spurr = idle_purr = 0UL;
+
+	for (i = 0; cpu_sysfs_fds[i].spurr > 0; i++) {
+		rc = pread(cpu_sysfs_fds[i].spurr, (void *)line, sizeof(line), 0);
+		if (rc == -1) {
+			fprintf(stderr, "Failed to /sys/devices/system/cpu/cpu%d/spurr\n",
+					cpu_sysfs_fds[i].cpu);
+			goto check_cpu_hotplug;
+		}
+
+		value = strtoll(line, NULL, 16);
+		spurr += value;
+
+		rc = pread(cpu_sysfs_fds[i].idle_purr, (void *)line, sizeof(line), 0);
+		if (rc == -1) {
+			fprintf(stderr, "Failed to /sys/devices/system/cpu/cpu%d/idle_purr\n",
+					cpu_sysfs_fds[i].cpu);
+			goto check_cpu_hotplug;
+		}
+
+		value = strtoll(line, NULL, 16);
+		idle_purr += value;
+
+		rc = pread(cpu_sysfs_fds[i].idle_spurr, (void *)line, sizeof(line), 0);
+		if (rc == -1) {
+			fprintf(stderr, "Failed to /sys/devices/system/cpu/cpu%d/idle_spurr\n",
+					cpu_sysfs_fds[i].cpu);
+			goto check_cpu_hotplug;
+		}
+
+		value = strtoll(line, NULL, 16);
+		idle_spurr += value;
+	}
+
+	se = get_sysentry("spurr");
+	sprintf(se->value, "%llu", spurr);
+	se = get_sysentry("idle_purr");
+	sprintf(se->value, "%llu", idle_purr);
+	se = get_sysentry("idle_spurr");
+	sprintf(se->value, "%llu", idle_spurr);
+
+	return 0;
+
+check_cpu_hotplug:
+	if(!cpu_online(cpu_sysfs_fds[i].cpu))
+		return 1;
+
+	return rc;
+}
+
+static void sig_int_handler(int signal)
+{
+	close_cpu_sysfs_fds(threads_in_system);
+	exit(1);
+}
+
+long long get_delta_value(char *se_name)
+{
+	long long value, old_value;
+	struct sysentry *se;
+
+	se = get_sysentry(se_name);
+	if (se->value[0] == '\0')
+		return 0LL;
+
+	value = strtoll(se->value, NULL, 0);
+	old_value = strtoll(se->old_value, NULL, 0);
+
+	return (value - old_value);
+}
+
 void get_time()
 {
 	struct timeval t;
@@ -83,18 +256,6 @@ void get_time()
 	se = get_sysentry("time");
 	sprintf(se->value, "%lld",
 		(long long)t.tv_sec * 1000000LL + (long long)t.tv_usec);
-}
-
-long long elapsed_time()
-{
-	long long newtime, oldtime = 0;
-	struct sysentry *se;
-
-	se = get_sysentry("time");
-	newtime = strtoll(se->value, NULL, 0);
-	oldtime = strtoll(se->old_value, NULL, 0);
-
-	return newtime - oldtime;
 }
 
 int get_time_base()
@@ -126,6 +287,24 @@ int get_time_base()
 	return 0;
 }
 
+double get_scaled_tb(void)
+{
+	double elapsed, timebase;
+	struct sysentry *se;
+	int online_cores;
+
+	se = get_sysentry("online_cores");
+	online_cores = atoi(se->value);
+
+	elapsed = get_delta_value("time");
+	elapsed = elapsed / 1000000.0;
+
+	se = get_sysentry("timebase");
+	timebase = atoi(se->value);
+
+	return (timebase * elapsed) * online_cores;
+}
+
 void get_sys_uptime(struct sysentry *unused_se, char *uptime)
 {
 	FILE *f;
@@ -151,32 +330,84 @@ void get_sys_uptime(struct sysentry *unused_se, char *uptime)
 	fclose(f);
 }
 
+int get_nominal_frequency(void)
+{
+	FILE *f;
+	char buf[80];
+	struct sysentry *se;
+	char *nfreq = NULL;
+
+	f = fopen("/proc/cpuinfo", "r");
+	if (!f) {
+		fprintf(stderr, "Could not open /proc/cpuinfo\n");
+		return -1;
+	}
+
+	while ((fgets(buf, 80, f)) != NULL) {
+		if (!strncmp(buf, "clock", 5)) {
+			nfreq = strchr(buf, ':') + 2;
+			break;
+		}
+	}
+
+	fclose(f);
+
+	if (!nfreq) {
+		fprintf(stderr, "Failed to read Nominal frequency\n");
+		return -1;
+	}
+
+	se = get_sysentry("nominal_freq");
+	snprintf(se->value, sizeof(se->value), "%s", nfreq);
+
+	return 0;
+}
+
+void get_effective_frequency()
+{
+	struct sysentry *se;
+	double delta_purr, delta_spurr;
+	double nominal_freq, effective_freq;
+
+	se = get_sysentry("nominal_freq");
+	nominal_freq = strtol(se->value, NULL, 10);
+
+	/*
+	 * Calculate the Effective Frequency (EF)
+	 * EF = (delta SPURR / delta PURR) * nominal frequency
+	 */
+	delta_purr = get_delta_value("purr");
+	delta_spurr = get_delta_value("spurr");
+
+	effective_freq = (delta_spurr / delta_purr) * nominal_freq;
+
+	se = get_sysentry("effective_freq");
+	sprintf(se->value, "%f", effective_freq);
+}
 
 void get_cpu_physc(struct sysentry *unused_se, char *buf)
 {
 	struct sysentry *se;
 	float elapsed;
-	float new_purr, old_purr;
+	float delta_purr;
 	float timebase, physc;
-	float new_tb, old_tb;
+	float delta_tb;
 
-	se = get_sysentry("purr");
-	new_purr = strtoll(se->value, NULL, 0);
-	old_purr = strtoll(se->old_value, NULL, 0);
+	delta_purr = get_delta_value("purr");
 
 	se = get_sysentry("tbr");
 	if (se->value[0] != '\0') {
-		new_tb = strtoll(se->value, NULL, 0);
-		old_tb = strtoll(se->old_value, NULL, 0);
+		delta_tb = get_delta_value("tbr");
 
-		physc = (new_purr - old_purr) / (new_tb - old_tb);
+		physc = delta_purr / delta_tb;
 	} else {
-		elapsed = elapsed_time() / 1000000.0;
+		elapsed = get_delta_value("time");
+		elapsed = elapsed / 1000000.0;
 
 		se = get_sysentry("timebase");
 		timebase = atoi(se->value);
 
-		physc = (new_purr - old_purr)/timebase/elapsed;
+		physc = delta_purr/timebase/elapsed;
 	}
 
 	sprintf(buf, "%.2f", physc);
@@ -198,7 +429,7 @@ void get_cpu_app(struct sysentry *unused_se, char *buf)
 {
 	struct sysentry *se;
 	float timebase, app, elapsed_time;
-	long long new_app, old_app, newtime, oldtime;
+	long long new_app, old_app, delta_time;
 	char *descr, uptime[32];
 
 	se = get_sysentry("time");
@@ -212,9 +443,8 @@ void get_cpu_app(struct sysentry *unused_se, char *buf)
 		}
 		elapsed_time = atof(uptime);
 	} else {
-		newtime = strtoll(se->value, NULL, 0);
-		oldtime = strtoll(se->old_value, NULL, 0);
-		elapsed_time = (newtime - oldtime) / 1000000.0;
+		delta_time = get_delta_value("time");
+		elapsed_time = delta_time / 1000000.0;
 	}
 
 	se = get_sysentry("timebase");
@@ -230,6 +460,93 @@ void get_cpu_app(struct sysentry *unused_se, char *buf)
 
 	app = (new_app - old_app)/timebase/elapsed_time;
 	sprintf(buf, "%.2f", app);
+}
+
+static double round_off_freq(void)
+{
+	double effective_freq, nominal_freq, freq;
+	struct sysentry *se;
+
+	se = get_sysentry("effective_freq");
+	effective_freq = strtod(se->value, NULL);
+
+	se = get_sysentry("nominal_freq");
+	nominal_freq = strtod(se->value, NULL);
+
+	freq = ((int)((effective_freq/nominal_freq * 100)+ 0.44) -
+	       (effective_freq/nominal_freq * 100)) /
+	       (effective_freq/nominal_freq * 100) * 100;
+
+	return freq;
+}
+
+void get_cpu_util_purr(struct sysentry *unused_se, char *buf)
+{
+	double delta_tb, delta_purr, delta_idle_purr;
+	double physc;
+
+	delta_tb = get_scaled_tb();
+	delta_purr = get_delta_value("purr");
+	delta_idle_purr = get_delta_value("idle_purr");
+
+	physc = (delta_purr - delta_idle_purr) / delta_tb;
+	physc *= 100.00;
+
+	sprintf(buf, "%.2f", physc);
+}
+
+void get_cpu_idle_purr(struct sysentry *unused_se, char *buf)
+{
+	double delta_tb, delta_purr, delta_idle_purr;
+	double physc, idle;
+
+	delta_tb = get_scaled_tb();
+	delta_purr = get_delta_value("purr");
+	delta_idle_purr = get_delta_value("idle_purr");
+
+	physc = (delta_purr - delta_idle_purr) / delta_tb;
+	idle = (delta_purr / delta_tb) - physc;
+	idle *= 100.00;
+
+	sprintf(buf, "%.2f", idle);
+}
+
+void get_cpu_util_spurr(struct sysentry *unused_se, char *buf)
+{
+	double delta_tb, delta_spurr, delta_idle_spurr;
+	double physc, rfreq;
+
+	delta_tb = get_scaled_tb();
+	delta_spurr = get_delta_value("spurr");
+	delta_idle_spurr = get_delta_value("idle_spurr");
+
+	physc = (delta_spurr - delta_idle_spurr) / delta_tb;
+	physc *= 100.00;
+
+	rfreq = round_off_freq();
+	physc += ((physc * rfreq) / 100);
+
+	sprintf(buf, "%.2f", physc);
+}
+
+void get_cpu_idle_spurr(struct sysentry *unused_se, char *buf)
+{
+	double delta_tb, delta_spurr, delta_idle_spurr;
+	double physc, idle;
+	double rfreq;
+
+	delta_tb = get_scaled_tb();
+	delta_spurr = get_delta_value("spurr");
+	delta_idle_spurr = get_delta_value("idle_spurr");
+
+	physc = (delta_spurr - delta_idle_spurr) / delta_tb;
+	idle = (delta_spurr / delta_tb) - physc;
+	idle *= 100.00;
+
+	rfreq = round_off_freq();
+	idle += ((idle * rfreq) / 100);
+
+	sprintf(buf, "%.2f", idle);
 }
 
 int parse_lparcfg()
@@ -269,8 +586,10 @@ int parse_lparcfg()
 		*nl = '\0';
 		
 		se = get_sysentry(name);
-		if (se)
-			strncpy(se->value, value, SYSDATA_VALUE_SZ);
+		if (se) {
+			strncpy(se->value, value, SYSDATA_VALUE_SZ - 1);
+			se->value[SYSDATA_VALUE_SZ - 1] = '\0';
+		}
 	}
 
 	fclose(f);
@@ -522,65 +841,171 @@ void get_mem_total(struct sysentry *se, char *buf)
 
 void get_smt_mode(struct sysentry *se, char *buf)
 {
-	FILE *f;
-	char line[128];
-	char *cmd = "/usr/sbin/ppc64_cpu --smt";
-	char *first_line;
+	int smt_state = 0;
 
-	f = popen(cmd, "r");
-	if (!f) {
-		fprintf(stderr, "Failed to execute %s\n", cmd);
+	if (!is_smt_capable()) {
+		sprintf(buf, "1");
 		return;
 	}
 
-	first_line = fgets(line, 128, f);
-	pclose(f);
-
-	if (!first_line) {
-		fprintf(stderr, "Could not read output of %s\n", cmd);
+	smt_state = parse_smt_state();
+	if (smt_state < 0) {
+		fprintf(stderr, "Failed to get smt state\n");
 		return;
 	}
 
-	/* The output is either "SMT=x" or "SMT is off", we can cheat
-	 * by looking at line[8] for an 'f'.
-	 */
-	if (line[8] == 'f')
+	if (smt_state == 1)
 		sprintf(buf, "Off");
 	else
-		sprintf(buf, "%c", line[4]);
+		sprintf(buf, "%d", smt_state);
 }
 
-long long get_cpu_time_diff()
+void get_online_cores(void)
 {
-	long long old_total = 0, new_total = 0;
 	struct sysentry *se;
+	int *core_state;
+	int online_cores = 0;
+	int i;
 
-	se = get_sysentry("cpu_total");
-	new_total = strtoll(se->value, NULL, 0);
-	old_total = strtoll(se->old_value, NULL, 0);
+	core_state = calloc(cpus_in_system, sizeof(int));
+	if (!core_state) {
+		fprintf(stderr, "Failed to read online cores\n");
+		return;
+	}
 
-	return new_total - old_total;
+	for (i = 0; i < cpus_in_system; i++) {
+		core_state[i] = (get_one_smt_state(i) > 0);
+		if (core_state[i])
+			online_cores++;
+	}
+
+	se = get_sysentry("online_cores");
+	sprintf(se->value, "%d", online_cores);
+
+	free(core_state);
 }
 
 void get_cpu_stat(struct sysentry *se, char *buf)
 {
 	float percent;
-	long long total, old_val, new_val;
+	long long total, delta_val;
 
-	total = get_cpu_time_diff();
-	new_val = atoll(se->value);
-	old_val = atoll(se->old_value);
-	percent = ((new_val - old_val)/(long double)total) * 100;
+	total = get_delta_value("cpu_total");
+	delta_val = get_delta_value(se->name);
+	percent = (delta_val/(long double)total) * 100;
 	sprintf(buf, "%.2f", percent);
+}
+
+int has_cpu_topology_changed(void)
+{
+	int i, changed = 1;
+	cpu_set_t *tmp_cpuset;
+	size_t online_cpus_size = CPU_ALLOC_SIZE(threads_in_system);
+
+	if (!online_cpus) {
+		online_cpus = CPU_ALLOC(threads_in_system);
+		if (!online_cpus) {
+			fprintf(stderr, "Failed to allocate memory for cpu_set\n");
+			return -1;
+		}
+
+		CPU_ZERO_S(online_cpus_size, online_cpus);
+
+		for (i = 0; i < threads_in_system; i++) {
+			if (!cpu_online(i))
+				continue;
+			CPU_SET_S(i, online_cpus_size, online_cpus);
+		}
+
+		return changed;
+	}
+
+	tmp_cpuset = CPU_ALLOC(threads_in_system);
+	if (!tmp_cpuset) {
+		fprintf(stderr, "Failed to allocate memory for cpu_set\n");
+		return -1;
+	}
+
+	CPU_ZERO_S(online_cpus_size, tmp_cpuset);
+
+	for (i = 0; i < threads_in_system; i++) {
+		if (!cpu_online(i))
+			continue;
+		CPU_SET_S(i, online_cpus_size, tmp_cpuset);
+	}
+
+	changed = CPU_EQUAL_S(online_cpus_size, online_cpus, tmp_cpuset);
+
+	CPU_FREE(online_cpus);
+	online_cpus = tmp_cpuset;
+
+	return changed;
+}
+
+void init_sysinfo(void)
+{
+	int rc = 0;
+
+	/* probe one time system cpu information */
+	rc = get_cpu_info(&threads_per_cpu, &cpus_in_system,
+			  &threads_in_system);
+	if (rc) {
+		fprintf(stderr, "Failed to capture system CPUs information\n");
+		exit(rc);
+	}
+
+	/* refer to init_sysdata for explanation */
+	if (!o_scaled)
+		return;
+
+	get_online_cores();
+
+	rc = get_nominal_frequency();
+	if (rc)
+		exit(rc);
+
+	if (signal(SIGINT, sig_int_handler) == SIG_ERR) {
+		fprintf(stderr, "Failed to add signal handler\n");
+		exit(-1);
+	}
+
+	rc = assign_cpu_sysfs_fds(threads_in_system);
+	if (rc)
+		exit(rc);
 }
 
 void init_sysdata(void)
 {
+	int rc = 0;
+
 	get_time();
 	parse_lparcfg();
 	parse_proc_stat();
 	parse_proc_ints();
 	get_time_base();
+
+	/* Skip reading spurr, purr, idle_{purr,spurr} and calculating
+	 * effective frequency for default option */
+	if (!o_scaled)
+		return;
+
+	rc = has_cpu_topology_changed();
+	if (!rc)
+		goto cpu_hotplug_restart;
+
+	rc = parse_sysfs_values();
+	if (rc == -1)
+		exit(rc);
+	else if (rc)
+		goto cpu_hotplug_restart;
+
+	get_effective_frequency();
+
+	return;
+
+cpu_hotplug_restart:
+	close_cpu_sysfs_fds(threads_in_system);
+	init_sysinfo();
 }
 
 void update_sysdata(void)
@@ -613,16 +1038,13 @@ int print_iflag_data()
 	return 0;
 }
 
-void print_default_output(int interval, int count)
+void print_system_configuration(void)
 {
-	char *fmt = "%5s %5s %5s %8s %8s %5s %5s %5s %5s %5s\n";
 	char *descr;
 	char buf[128];
 	int offset, smt, active_proc;
 	char type[32];
 	char value[32];
-	char user[32], sys[32], wait[32], idle[32], physc[32], entc[32];
-	char lbusy[32], app[32], vcsw[32], phint[32];
 
 	memset(buf, 0, 128);
 	get_sysdata("shared_processor_mode", &descr, value);
@@ -655,6 +1077,16 @@ void print_default_output(int interval, int count)
 	offset += sprintf(buf + offset, "ent=%s ", value);
 
 	fprintf(stdout, "\nSystem Configuration\n%s\n\n", buf);
+}
+
+void print_default_output(int interval, int count)
+{
+	char *fmt = "%5s %5s %5s %8s %8s %5s %5s %5s %5s %5s\n";
+	char *descr;
+	char user[32], sys[32], wait[32], idle[32], physc[32], entc[32];
+	char lbusy[32], app[32], vcsw[32], phint[32];
+
+	print_system_configuration();
 
 	fprintf(stdout, fmt, "\%user", "\%sys", "\%wait", "\%idle", "physc",
 		"\%entc", "lbusy", "app", "vcsw", "phint");
@@ -684,6 +1116,42 @@ void print_default_output(int interval, int count)
 	} while (--count > 0);
 }
 
+void print_scaled_output(int interval, int count)
+{
+	char purr[32], purr_idle[32], spurr[32], spurr_idle[32];
+	char nominal_f[32], effective_f[32];
+	double nominal_freq, effective_freq;
+	char *descr;
+
+	print_system_configuration();
+
+	fprintf(stdout, "---Actual---                 -Normalized-\n");
+	fprintf(stdout, "%%busy  %%idle   Frequency     %%busy  %%idle\n");
+	fprintf(stdout, "------ ------  ------------- ------ ------\n");
+	do {
+		if (interval) {
+			sleep(interval);
+			update_sysdata();
+		}
+
+		get_sysdata("purr_cpu_util", &descr, purr);
+		get_sysdata("purr_cpu_idle", &descr, purr_idle);
+		get_sysdata("spurr_cpu_util", &descr, spurr);
+		get_sysdata("spurr_cpu_idle", &descr, spurr_idle);
+		get_sysdata("nominal_freq", &descr, nominal_f);
+		get_sysdata("effective_freq", &descr, effective_f);
+		nominal_freq = strtod(nominal_f, NULL);
+		effective_freq = strtod(effective_f, NULL);
+
+		fprintf(stdout, "%6s %6s %5.2fGHz[%3d%%] %6s %6s\n",
+			purr, purr_idle,
+			effective_freq/1000,
+			(int)((effective_freq/nominal_freq * 100)+ 0.44 ),
+			spurr, spurr_idle );
+		fflush(stdout);
+	} while (--count > 0);
+}
+
 static void usage(void)
 {
 	printf("Usage:  lparstat [ options ]\n\tlparstat <interval> [ count ]\n\n"
@@ -691,6 +1159,7 @@ static void usage(void)
 	       "\t-h, --help		Show this message and exit.\n"
 	       "\t-V, --version	\tDisplay lparstat version information.\n"
 	       "\t-i			Lists details on the LPAR configuration.\n"
+	       "\t-E			Print SPURR metrics.\n"
 	       "\t-l, --legacy		Print the report in legacy format.\n"
 	       "interval		The interval parameter specifies the amount of time between each report.\n"
 	       "count			The count parameter specifies how many reports will be displayed.\n");
@@ -715,7 +1184,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	while ((c = getopt_long(argc, argv, "iVhl",
+	while ((c = getopt_long(argc, argv, "iEVhl",
 				long_opts, &opt_index)) != -1) {
 		switch(c) {
 			case 'i':
@@ -723,6 +1192,9 @@ int main(int argc, char *argv[])
 				break;
 			case 'l':
 				o_legacy = true;
+				break;
+			case 'E':
+				o_scaled = true;
 				break;
 			case 'V':
 				printf("lparstat - %s\n", VERSION);
@@ -746,12 +1218,16 @@ int main(int argc, char *argv[])
 	if (optind < argc)
 		count = atoi(argv[optind++]);
 
+	init_sysinfo();
 	init_sysdata();
 
 	if (i_option)
 		print_iflag_data();
-	else
+	else if (o_scaled) {
+		print_scaled_output(interval, count);
+		close_cpu_sysfs_fds(threads_in_system);
+	} else {
 		print_default_output(interval, count);
-
+	}
 	return 0;
 }

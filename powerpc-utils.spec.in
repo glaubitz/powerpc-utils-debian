@@ -1,3 +1,4 @@
+%bcond_with systemd
 %define name powerpc-utils
 %define version @PACKAGE_VERSION@
 %define release 1
@@ -11,7 +12,6 @@ Source:		powerpc-utils-%{version}.tar.gz
 BuildRoot:	/tmp/%{name}-buildroot/
 Vendor:         IBM Corp.
 Requires:	/bin/bash, /bin/sh, /bin/sed, /usr/bin/perl, librtas >= 1.4.0, zlib
-Requires:	bc
 Requires:	coreutils
 Requires:	findutils
 Requires:	gawk
@@ -29,7 +29,7 @@ Utilities for maintaining and servicing PowerPC systems.
 %setup -q
 
 %build
-%configure
+%configure %{?_with_systemd} --disable-werror
 %{__make} %{?_smp_mflags}
 
 %install
@@ -69,8 +69,24 @@ Utilities for maintaining and servicing PowerPC systems.
 /usr/sbin/pseries_platform
 /usr/sbin/errinjct
 /usr/sbin/rtas_dbg
+/usr/sbin/vcpustat
+/usr/sbin/hcnmgr
+/usr/sbin/hcncfgdrc
+/usr/sbin/hcnqrydev
+/usr/sbin/hcnrmdev
+/usr/sbin/hcnrmhcn
+/usr/sbin/hcnversion
 
 /usr/bin/amsstat
+
+%if %{with systemd}
+/usr/sbin/smtstate
+/var/lib/powerpc-utils/smt.state
+/lib/systemd/system/smtstate.service
+/lib/systemd/system/smt_off.service
+/lib/systemd/system/hcn-init.service
+/usr/share/man/man8/smtstate.8.gz
+%endif
 
 /usr/share/man/man8/update_flash.8.gz
 /usr/share/man/man8/activate_firmware.8.gz
@@ -92,11 +108,34 @@ Utilities for maintaining and servicing PowerPC systems.
 /usr/share/man/man1/amsstat.1.gz
 /usr/share/man/man8/errinjct.8.gz
 /usr/share/man/man8/rtas_dbg.8.gz
+/usr/share/man/man8/vcpustat.8.gz
 
 %post
 # Post-install script -----------------------------------------------
 ln -sf /usr/sbin/serv_config usr/sbin/uspchrp
 ln -sf /usr/share/man/man8/serv_config.8 usr/share/man/man8/uspchrp.8
+
+%if %{with systemd}
+systemctl daemon-reload
+systemctl start hcn-init.service
+systemctl enable hcn-init.service
+# update the smt.state file with current SMT
+/usr/sbin/smtstate --save
+%endif
+
+%preun
+# Pre-uninstall script ----------------------------------------------
+%if %{with systemd}
+svc=$(systemctl list-units -la | grep -Fq smtstate.service; echo $?)
+if [ "$svc" = "0" ]; then
+    systemctl stop smtstate.service
+    systemctl disable smtstate.service
+fi
+if systemctl is-enabled hcn-init.service |grep -q "enabled"; then
+	systemctl stop hcn-init.service
+	systemctl disable hcn-init.service
+fi
+%endif
 
 %postun
 # Post-uninstall script ---------------------------------------------
@@ -106,7 +145,13 @@ if [ "$1" = "0" ]; then
 	rm -f /usr/share/man/man8/uspchrp.8.gz
 fi
 
+%if %{with systemd}
+systemctl daemon-reload
+%endif
+
 %changelog
+* Fri Mar 06 2020 Naveen N. Rao <naveen.n.rao@linux.vnet.ibm.com>
+- Added vcpustat utility
 * Tue Dec  7 2011 Brian King <brking@linux.vnet.ibm.com>
 - Added lsslot man page
 * Fri May 13 2011 Brian King <brking@linux.vnet.ibm.com>

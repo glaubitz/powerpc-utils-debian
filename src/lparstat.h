@@ -25,6 +25,10 @@
 #define SYSDATA_NAME_SZ		64
 #define SYSDATA_DESCR_SZ	128
 
+#define SYSFS_PERCPU_SPURR	"/sys/devices/system/cpu/cpu%d/spurr"
+#define SYSFS_PERCPU_IDLE_PURR	"/sys/devices/system/cpu/cpu%d/idle_purr"
+#define SYSFS_PERCPU_IDLE_SPURR	"/sys/devices/system/cpu/cpu%d/idle_spurr"
+
 struct sysentry {
 	char	value[SYSDATA_VALUE_SZ];	/* value from file */
 	char	old_value[SYSDATA_VALUE_SZ];	/* previous value from file */
@@ -32,6 +36,14 @@ struct sysentry {
 	char	descr[SYSDATA_DESCR_SZ];	/* description of data */
 	void (*get)(struct sysentry *, char *);
 };
+
+struct cpu_sysfs_file_desc {
+	int cpu;	/* cpu number */
+	int spurr;      /* per-cpu /sys/devices/system/cpu/cpuX/spurr file descriptor */
+	int idle_purr;  /* per-cpu /sys/devices/system/cpu/cpuX/idle_purr file descriptor */
+	int idle_spurr; /* per-cpu /sys/devices/system/cpu/cpuX/idle_spurr file descriptor */
+};
+typedef struct cpu_sysfs_file_desc cpu_sysfs_fd;
 
 extern void get_smt_state(struct sysentry *, char *);
 extern void get_capped_mode(struct sysentry *, char *);
@@ -48,6 +60,10 @@ extern void get_cpu_physc(struct sysentry *, char *);
 extern void get_per_entc(struct sysentry *, char *);
 extern void get_cpu_app(struct sysentry *, char *);
 extern void get_sys_uptime(struct sysentry *, char *);
+extern void get_cpu_util_purr(struct sysentry *unused_se, char *buf);
+extern void get_cpu_idle_purr(struct sysentry *unused_se, char *buf);
+extern void get_cpu_util_spurr(struct sysentry *unused_se, char *buf);
+extern void get_cpu_idle_spurr(struct sysentry *uunused_se, char *buf);
 
 struct sysentry system_data[] = {
 	/* System Names */
@@ -184,10 +200,14 @@ struct sysentry system_data[] = {
 	 .descr = "Online Memory",
 	 .get = &get_mem_total},
 
-	/* ppc64_cpu --smt */
+	/* smt mode, cpu_info_helpers::__do_smt() */
 	{.name = "smt_state",
 	 .descr = "SMT",
 	 .get = &get_smt_mode},
+
+	/* online cores, cpu_info_helpers::get_one_smt_state() */
+	{.name = "online_cores",
+	 .descr = "Online Cores"},
 
 	/* /proc/stat */
 	{.name = "cpu_total",
@@ -238,6 +258,11 @@ struct sysentry system_data[] = {
 	/* /proc/cpuinfo */
 	{.name = "timebase",
 	 .descr = "Timebase"},
+	{.name = "nominal_freq",
+	 .descr = "Nominal Frequency"},
+	/* derived from nominal freq */
+	{.name = "effective_freq",
+	 .descr = "Effective Frequency"},
 
 	/* /proc/interrupts */
 	{.name = "phint",
@@ -247,6 +272,35 @@ struct sysentry system_data[] = {
 	{.name = "uptime",
 	 .descr = "System Uptime",
 	 .get = &get_sys_uptime},
+
+	/* /sys/devices/system/cpu/cpu<n>/ */
+	/* Sum of per CPU SPURR registers */
+	{.name = "spurr",
+	 .descr = "Scaled Processor Utilization Resource Register"},
+	/* Sum of per CPU Idle PURR Values */
+	{.name = "idle_purr",
+	 .descr = "Processor Utilization Resource Idle Values"},
+	/* Sum of per CPU Idle SPURR Values */
+	{.name = "idle_spurr",
+	 .descr = "Scaled Processor Utilization Resource Idle Values"},
+
+	/* Dervied from above sysfs values */
+	/* PURR Utilization */
+	{.name = "purr_cpu_util",
+	 .descr = "Physical CPU consumed - PURR",
+	 .get = &get_cpu_util_purr},
+	/* PURR Idle time */
+	{.name = "purr_cpu_idle",
+	 .descr = "Idle CPU value - PURR",
+	 .get = &get_cpu_idle_purr},
+	/* SPURR Utilization */
+	{.name = "spurr_cpu_util",
+	 .descr = "Physical CPU consumed - SPURR",
+	 .get = &get_cpu_util_spurr},
+	/* SPURR Idle time */
+	{.name = "spurr_cpu_idle",
+	 .descr = "Idle CPU value - SPURR",
+	 .get = &get_cpu_idle_spurr},
 
 	{.name[0] = '\0'},
 };
