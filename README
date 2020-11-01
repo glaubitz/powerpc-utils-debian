@@ -2,6 +2,7 @@ powerpc-utils package
 ==========================
 
 Mailing List: powerpc-utils-devel@googlegroups.com
+Subscribe: https://groups.google.com/forum/#!forum/powerpc-utils-devel/join
 
 This package contains utilities which are intended for maintenance of IBM 
 powerpc platforms that follow the POWER Architecture Platform Reference (PAPR),
@@ -52,9 +53,12 @@ on a partition.
 
 ppc64_cpu:
 ---------
-This allows users to set the smt state, smt-snooze-delay and other settings
-on ppc64 processors. It also allows users to control the number of processor
-cores which are online (not in the sleep state).
+This allows users to set the smt state and other settings on ppc64 processors.
+It also allows users to control the number of processor cores which are online
+(not in the sleep state).
+
+Previously this allowed setting of smt-snooze-delay, but Linux has not
+supported this since 3.14.
 
 lsdevinfo:
 ---------
@@ -64,7 +68,7 @@ virtual devices so they can be matched against the VIOS names.
 usysident, usysattn, usysfault:
 -------------------------------
 Deprecated. Moved to ppc64-diag package.
-http://sourceforge.net/projects/linux-diag/files/ppc64-diag/
+https://github.com/power-ras/ppc64-diag
 
 ===================
 
@@ -83,3 +87,7 @@ rtas_ibm_get_vpd:
 Used by the lsvpd utility to gather Vital Product Data that changes
 dynamically.
 
+hcnmgr:
+---------
+This utility provides the HMC tools to hybrid virtual network to allow
+SR_IOV VFs on LPAR capable for live partition migration.

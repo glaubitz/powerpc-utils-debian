@@ -493,7 +493,7 @@ add_node(char *path, struct of_node *new_nodes)
  * @returns 0 on success
  */
 static int
-remove_node(char *path)
+remove_node(const char *path)
 {
 	int rc = 0;
 	int fd;
@@ -596,7 +596,7 @@ add_device_tree_nodes(char *path, struct of_node *new_nodes)
  * @returns 0 on success, !0 otherwise
  */
 int
-remove_device_tree_nodes(char *path)
+remove_device_tree_nodes(const char *path)
 {
         DIR *d;
         struct dirent *de;
@@ -1437,8 +1437,25 @@ int is_display_adapter(struct dr_node *node)
 int kernel_dlpar_exists(void)
 {
 	struct stat sbuf;
+	char buf[64];
 
-	if (!stat(SYSFS_DLPAR_FILE, &sbuf))
+	if (stat(SYSFS_DLPAR_FILE, &sbuf))
+		return 0;
+
+	if (!get_str_attribute(SYSFS_DLPAR_FILE, NULL, buf, sizeof(buf))) {
+		switch (usr_drc_type) {
+		case DRC_TYPE_MEM:
+			if (strstr(buf, "memory"))
+				return 1;
+			break;
+		case DRC_TYPE_CPU:
+			if (strstr(buf, "cpu"))
+				return 1;
+			break;
+		default:
+			return 0;
+		}
+	} else if (usr_drc_type == DRC_TYPE_MEM)
 		return 1;
 
 	return 0;

@@ -53,7 +53,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <librtas.h>
-#define _GNU_SOURCE
 #include <getopt.h>
 
 #include "librtas_error.h"
@@ -857,8 +856,8 @@ update_value(struct service_var *var, char *val) {
 			param[2] = (uint8_t)atoi(val);
 		}
 		else {
-			*first_16_bits = htobe16(sizeof(val));
-			strncpy(param+2, val, BUF_SIZE-2);
+			*first_16_bits = htobe16(strlen(val) + 1);
+			strncpy(param + 2, val, BUF_SIZE - 3);
 		}
 
 		rc = rtas_set_sysparm(var->sysparm_num, param);

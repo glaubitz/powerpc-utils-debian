@@ -37,6 +37,8 @@ PSERIES_PLATFORM=$(dirname $0)/pseries_platform
 PLATFORM=$(sed /proc/cpuinfo -ne "s/^machine\t*: \(.*\)/\1/p")
 case $PLATFORM in
     EFIKA5K2\ *)	PLATFORM=efika ;;
+    PowerBook*)		PLATFORM=mac ;;
+    PowerMac*)		PLATFORM=mac ;;
 esac
 
 # Usage statemnet
@@ -142,13 +144,10 @@ get_hbtl()
 
     HOST=${hbtl%%:*}
     hbtl=${hbtl#*:}
-    BUS=${hbtl%%:*}
-    BUS=`echo "ibase=10;obase=16; $BUS" | bc | tr "[:upper:]" "[:lower:]"`
+    BUS=`printf '%x' "${hbtl%%:*}"`
     hbtl=${hbtl#*:}
-    ID=${hbtl%%:*}
-    ID=`echo "ibase=10;obase=16; $ID" | bc | tr "[:upper:]" "[:lower:]"`
-    LUN=${hbtl#*:}
-    LUN=`echo "ibase=10;obase=16; $LUN" | bc | tr "[:upper:]" "[:lower:]"`
+    ID=`printf '%x' "${hbtl%%:*}"`
+    LUN=`printf '%x' "${hbtl#*:}"`
 }
 
 #
@@ -172,13 +171,7 @@ get_scsi_disk_no()
     local vdiskno vdisk
     typeset -i vdiskno
     vdiskno=$((0x1000000 | $C | $D ))
-    vdisk=${vdiskno##-}
-
-    vdisk=`echo \`bc << END
-ibase=10
-obase=16
-$vdisk
-END\``
+    vdisk=`printf '%X' "${vdiskno#-}"`
 
     local extrazeroes="00000000"
     echo $vdisk$extrazeroes
@@ -208,13 +201,7 @@ get_vdisk_no()
     local vdiskno vdisk
     typeset -i vdiskno
     vdiskno=$((0x8000 | $B | $C | $D ))
-    vdisk=${vdiskno##-}
-
-    vdisk=`echo \`bc << END
-ibase=10
-obase=16
-$vdisk
-END\``
+    vdisk=`printf '%X' "${vdiskno#-}"`
 
     local extrazeroes="000000000000"
     echo $vdisk$extrazeroes
@@ -240,14 +227,8 @@ get_usb_vdisk_no()
 
         local vdiskno vdisk
         vdiskno=$((0x1000000 | $B | $LUN ))
-        vdisk=${vdiskno##-}
+        vdisk=`printf '%X' "${vdiskno#-}"`
 
-vdisk=$(bc << END
-ibase=10
-obase=16
-$vdisk
-END
-)
         local extrazeroes="00000000"
         echo $vdisk$extrazeroes
 }
@@ -286,7 +267,7 @@ get_usb_storage_no()
 # $3 on_exit behavior on error
 goto_dir()
 {
-    local start_dir=$1
+    local start_dir=$(readlink -f $1)
     local fname=$2
     local found=0
     local on_exit=1
@@ -349,7 +330,7 @@ is_pata_dev()
     local sysfs_dir
     local udev_path
     local udevinfo="/usr/bin/udevinfo"
-    local udevadm="/sbin/udevadm"
+    local udevadm="/usr/bin/udevadm"
 
     if [[ -a $udevadm ]]; then
         udev_path=`$udevadm info --query=path --name=$DEVNAME`
@@ -519,6 +500,13 @@ l2of_ide()
     if [[ -z $link ]]; then
         err $ERR_NO_SYSFS_DEVINFO
     fi
+
+    # partition number: N in sd*N
+    local devpart="${DEVICE##*[a-z]}"
+    if [[ $devpart = $DEVICE ]]; then
+        devpart='' # no partition number
+    fi
+
     cd $link
 
     # get the device number
@@ -547,7 +535,11 @@ l2of_ide()
         devno=0,0
     fi
 
-    OF_PATH=$OF_PATH/disk@$devno
+    if [ "$PLATFORM" = "mac" ] ; then
+        OF_PATH=$OF_PATH/@$devno
+    else
+        OF_PATH=$OF_PATH/disk@$devno
+    fi
 }
 
 #
@@ -581,9 +573,17 @@ l2of_vd()
     goto_dir $PWD "devspec"
 
     OF_PATH=`$CAT $PWD/devspec`
+    SYS_PATH=$PWD
     if [[ -z $OF_PATH ]]; then
         err $ERR_NO_OFPATH
     fi
+
+    # No partition specified.
+    if [[ -z $devpart ]]; then
+        return
+    fi
+
+    OF_PATH="${OF_PATH}:${devpart}"
 }
 
 #
@@ -656,7 +656,7 @@ l2of_nvme()
 
         goto_dir $PWD "device/devspec"
 
-        devspec=`$CAT $PWD/device/devspec`
+        devspec=`$CAT $PWD/device/devspec | tr -d '\000'`
         if [[ -n $devspec ]]; then
             found=1
             break
@@ -681,7 +681,7 @@ l2of_nvme()
 
     # Device type is usually 'namespace'.
     # Get it from device-tree just in case.
-    devtype=`$CAT /proc/device-tree${devspec}/namespace/name`
+    devtype=`$CAT /proc/device-tree${devspec}/namespace/name | tr -d '\000'` 2> /dev/null
     if [[ -z $devtype ]]; then
         err $ERR_NO_OFPATH
     fi
@@ -724,9 +724,7 @@ scsilun_to_int()
     local lunstr=$1
     local A B C D L
 
-    L=${lunstr/00000000}
-    L=`echo $L | tr "[a-z]" "[A-Z]"`
-    L=`echo "ibase=16;obase=A; $L" | bc`
+    L=$(( 0x${lunstr/00000000} ))
 
     A=$(( ($L >> 8) & 0xff ))
     B=$(($L & 0xff))
@@ -740,9 +738,7 @@ scsilun_to_int()
 get_fc_scsilun()
 {
     local lun=$1
-    local L
-    L=`echo $lun | tr "[a-z]" "[A-Z]"`
-    L=`echo "ibase=16;obase=A; $L" | bc`
+    local L=$(( 0x$lun ))
 
     local fc_lun=`int_to_scsilun $L`
     echo "$fc_lun"
@@ -773,7 +769,7 @@ l2of_scsi()
     local devtype
 
     # There may be many instances of DEVICE under /sys
-    for dir in `$FIND /sys -name $DEVICE`; do
+    for dir in `$FIND /sys/class/block -name $DEVICE`; do
 	# Move up until we find one with a device link
 	goto_dir $dir "device" 0
 	if [ $? -eq 0 ]; then
@@ -784,6 +780,12 @@ l2of_scsi()
 
     if [ $found -eq 0 ]; then
         err $ERR_NOT_CONFIG
+    fi
+
+    # partition number: N in sd*N
+    local devpart="${DEVICE##*[a-z]}"
+    if [[ $devpart = $DEVICE ]]; then
+        devpart='' # no partition number
     fi
 
     # follow the 'device' link
@@ -803,8 +805,15 @@ l2of_scsi()
     # move up directories until we find one with devspec information
     goto_dir $PWD "devspec"
 
-    OF_PATH=`$CAT $PWD/devspec`
+    if [[ -e $PWD/devspec ]]; then
+        OF_PATH=`$CAT $PWD/devspec`
+    else
+        err $ERR_NO_OFPATH
+    fi
+
     if [[ -z $OF_PATH ]]; then
+        err $ERR_NO_OFPATH
+    elif [[ ! -e /proc/device-tree/$OF_PATH ]]; then
         err $ERR_NO_OFPATH
     fi
 
@@ -906,12 +915,9 @@ l2of_scsi()
                     OF_PATH=$(printf "%s,%s" $OF_PATH $LUNSTR)
                 fi
             else
-                B=`echo $BUS | tr "[a-z]" "[A-Z]"`
-                B=`echo "ibase=16;obase=A; $B" | bc`
-                T=`echo $ID | tr "[a-z]" "[A-Z]"`
-                T=`echo "ibase=16;obase=A; $T" | bc`
-                L=`echo $LUN | tr "[a-z]" "[A-Z]"`
-                L=`echo "ibase=16;obase=A; $L" | bc`
+                B=$(( 0x$BUS ))
+                T=$(( 0x$ID ))
+                L=$(( 0x$LUN ))
 
                 sas_id=$(( ($B << 16) | ($T << 8) | $L ))
 
@@ -922,11 +928,21 @@ l2of_scsi()
             fi
 	fi
     else
+
+        plug_id=$(ls -dv $SYS_PATH/*/host* 2>/dev/null | grep -n "/host$HOST$")
+        [ -z "$plug_id" ] && {
+                plug_id=$(ls -dv $SYS_PATH/host* 2>/dev/null | grep -n "/host$HOST$")
+        }
+        plug_id=$((${plug_id%%:*}-1))
+
         # make sure the "scsi" information is on the end of the path
         local scsi_name=${OF_PATH##/*/}
         scsi_name=${scsi_name%%@*}
-        if [[ $scsi_name != "scsi" ]]; then
+        if [[ $scsi_name != "scsi" && "$PLATFORM" != "mac" ]]; then
             scsi_name="scsi@$BUS"
+            OF_PATH=$OF_PATH/$scsi_name
+        elif [[ $scsi_name != "scsi" && "$PLATFORM" = "mac" && $devtype != "ata" ]]; then
+            scsi_name="@$plug_id"
             OF_PATH=$OF_PATH/$scsi_name
         fi
 
@@ -941,9 +957,20 @@ l2of_scsi()
              diskno=`get_scsi_disk_no $device_dir`
              OF_PATH=$OF_PATH/disk\@$diskno
         else
-             OF_PATH=$OF_PATH/sd@$ID,$LUN
+             if [ "$PLATFORM" = "mac" ] ; then
+                 OF_PATH=$OF_PATH/@$ID
+             else
+                 OF_PATH=$OF_PATH/sd@$ID,$LUN
+             fi
        fi
     fi
+
+    # No partition specified.
+    if [[ -z $devpart ]]; then
+        return
+    fi
+
+    OF_PATH="${OF_PATH}:${devpart}"
 }
 
 #
@@ -1371,18 +1398,13 @@ of2l_sas()
         local device_dir=$PWD
 
         local B T L
-        B=`echo $BUS | tr "[a-z]" "[A-Z]"`
-        B=`echo "ibase=16;obase=A; $B" | bc`
-        T=`echo $ID | tr "[a-z]" "[A-Z]"`
-        T=`echo "ibase=16;obase=A; $T" | bc`
-        L=`echo $LUN | tr "[a-z]" "[A-Z]"`
-        L=`echo "ibase=16;obase=A; $L" | bc`
+        B=$(( 0x$BUS ))
+        T=$(( 0x$ID ))
+        L=$(( 0x$LUN ))
 
         if [[ $matchtype = "ipr32" ]]; then
             local sas_id=$((($B << 16) | ($T << 8) | $L))
-
-            sas_id=`echo "ibase=A;obase=16; $sas_id" | bc`
-            sas_id=`echo $sas_id | tr "[A-Z]" "[a-z]"`
+            sas_id=`printf '%x' "$sas_id"`
 
             if [[ $sas_id = $DEV_ID ]]; then
                 goto_dir $PWD "devspec"
@@ -1556,9 +1578,7 @@ of2l_fc()
 	local wwpn=`get_fc_wwpn "$device_path/fc_remote_ports*"`
 
         if [[ $wwpn = $OF_WWPN ]]; then
-                local L
-                L=`echo $LUN | tr "[a-z]" "[A-Z]"`
-                L=`echo "ibase=16;obase=A; $L" | bc`
+                local L=$(( 0x$LUN ))
 
                 if [[ $L = $lunint ]]; then
                         LOGICAL_DEVNAME="${dir##*/}"

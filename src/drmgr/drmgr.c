@@ -23,7 +23,6 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/stat.h>
-#define _GNU_SOURCE
 #include <getopt.h>
 
 #include "dr.h"
@@ -310,12 +309,14 @@ struct command *get_command(void)
  		usr_action = HIBERNATE;
  		return &commands[DRSLOT_CHRP_PHIB];
 		break;
+	case DRC_TYPE_MIGRATION:
+		return &commands[DRMIG_CHRP_PMIG];
 	default:
 		/* If we make it this far, the user specified an invalid
 		 * connector type.
 		 */
 		say(ERROR, "Dynamic reconfiguration is not supported for "
-		    "connector\ntype \"%s\" on this system\n", usr_drc_type);
+		    "connector type \"%d\" on this system\n", usr_drc_type);
 		break;
 	}
 

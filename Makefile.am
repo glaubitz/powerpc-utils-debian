@@ -22,7 +22,8 @@ sbin_SCRIPTS = \
 	scripts/ls-vscsi \
 	scripts/ls-vdev \
 	scripts/nvsetenv \
-	scripts/pseries_platform
+	scripts/pseries_platform \
+	scripts/hcnmgr
 
 man_MANS = \
 	man/activate_firmware.8 \
@@ -44,7 +45,9 @@ man_MANS = \
 	man/lsslot.8 \
 	man/ppc64_cpu.8 \
 	man/errinjct.8 \
-	man/rtas_dbg.8
+	man/vcpustat.8 \
+	man/rtas_dbg.8 \
+	man/drmgr.8
 
 EXTRA_DIST += $(bin_SCRIPTS) $(sbin_SCRIPTS) $(man_MANS)
 
@@ -54,27 +57,40 @@ EXTRA_DIST += COPYING Changelog powerpc-utils.spec.in doc/activate_firmware.doxy
 	     doc/set_poweron_time.doxycfg doc/uesensor.doxycfg
 
 if WITH_SYSTEMD
-EXTRA_DIST += systemd/smt_off.service.in
+sbin_SCRIPTS += scripts/smtstate
+man_MANS += man/smtstate.8
+EXTRA_DIST += systemd/smt_off.service.in \
+	systemd/smtstate.service.in \
+	systemd/hcn-init.service.in \
+	scripts/smtstate.in \
+	var/lib/powerpc-utils/smt.state \
+	man/smtstate.8
 endif
 
-sbin_PROGRAMS += src/nvram src/lsprop src/lparstat src/ppc64_cpu
+sbin_PROGRAMS += src/nvram src/lsprop src/lparstat src/ppc64_cpu src/vcpustat
 
 pseries_platform_SOURCES = src/common/pseries_platform.c src/common/pseries_platform.h
 
 librtas_error_SOURCES = src/common/librtas_error.c src/common/librtas_error.h
+
+cpu_info_helpers_SOURCES = src/common/cpu_info_helpers.c src/common/cpu_info_helpers.h
 
 src_nvram_SOURCES = src/nvram.c src/nvram.h $(pseries_platform_SOURCES)
 src_nvram_LDADD = -lz @LIBDL@
 
 src_lsprop_SOURCES = src/lsprop.c $(pseries_platform_SOURCES)
 
-src_lparstat_SOURCES = src/lparstat.c src/lparstat.h $(pseries_platform_SOURCES)
+src_lparstat_SOURCES = src/lparstat.c src/lparstat.h $(pseries_platform_SOURCES) \
+		       $(cpu_info_helpers_SOURCES)
 
-src_ppc64_cpu_SOURCES = src/ppc64_cpu.c $(pseries_platform_SOURCES)
+src_ppc64_cpu_SOURCES = src/ppc64_cpu.c $(pseries_platform_SOURCES) $(cpu_info_helpers_SOURCES)
 src_ppc64_cpu_LDADD = -lpthread
 
+src_vcpustat_SOURCES = src/vcpustat.c $(pseries_platform_SOURCES)
 
-AM_CFLAGS = -Wall -g -I $(top_srcdir)/src/common/
+
+AM_CFLAGS = -Wall -g
+AM_CPPFLAGS = -I $(top_srcdir)/src/common/ -D _GNU_SOURCE
 
 if WITH_LIBRTAS
 sbin_PROGRAMS += \
@@ -179,9 +195,25 @@ noinst_HEADERS += \
 
 src_drmgr_lsslot_LDADD = -lrtas
 
+install-exec-hook:
+	cd $(DESTDIR)${sbindir} && \
+	ln -sf hcnmgr hcncfgdrc && \
+	ln -sf hcnmgr hcnrmhcn && \
+	ln -sf hcnmgr hcnqrydev && \
+	ln -sf hcnmgr hcnrmdev && \
+	ln -sf hcnmgr hcnversion
+
 if WITH_SYSTEMD
-install-data-hook: systemd/smt_off.service
-	$(MKDIR_P) @prefix@${systemd_unit_dir}
-	$(INSTALL_SCRIPT) $< @prefix@${systemd_unit_dir}/
-	sed -i -e 's,$${exec_prefix},@sbindir@,g' @prefix@${systemd_unit_dir}/smt_off.service
+install-data-hook:
+	$(MKDIR_P) $(DESTDIR)${systemd_unit_dir}
+	$(MKDIR_P) $(DESTDIR)/var/lib/@PACKAGE@
+	$(INSTALL_DATA) systemd/smt_off.service $(DESTDIR)${systemd_unit_dir}/
+	$(INSTALL_DATA) systemd/smtstate.service $(DESTDIR)${systemd_unit_dir}/
+	$(INSTALL_DATA) systemd/hcn-init.service $(DESTDIR)${systemd_unit_dir}/
+	$(INSTALL_DATA) var/lib/powerpc-utils/smt.state $(DESTDIR)/var/lib/@PACKAGE@/
+	$(INSTALL_SCRIPT) scripts/smtstate $(DESTDIR)@sbindir@
+	sed -i -e 's,$${exec_prefix},@prefix@,g' $(DESTDIR)${systemd_unit_dir}/smt_off.service
+	sed -i -e 's,$${exec_prefix},@prefix@,g' $(DESTDIR)${systemd_unit_dir}/smtstate.service
+	sed -i -e 's,$${exec_prefix},@prefix@,g' $(DESTDIR)${systemd_unit_dir}/hcn-init.service
+	sed -i -e 's,$${exec_prefix},@prefix@,g' $(DESTDIR)@sbindir@/smtstate
 endif
