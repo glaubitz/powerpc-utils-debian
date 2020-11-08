@@ -707,7 +707,7 @@ retrieve_value(struct service_var *var, char *buf, size_t size) {
 				byte_to_string(param[2], buf, size);
 			}
 			else {
-				strncpy(buf, param+2, ((size>ret_size)?
+				memcpy(buf, param+2, ((size>ret_size)?
 					ret_size:size));
 				buf[ret_size] = '\0';
 			}

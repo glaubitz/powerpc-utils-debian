@@ -204,7 +204,7 @@ static uint32_t get_config_addr_from_reg(char *devpath)
 	uint32_t *be_caddr;
 	uint32_t caddr = 0;
 
-	strncpy(path, devpath, BUFSZ-5);
+	memcpy(path, devpath, BUFSZ-5);
 	strcat(path, "/reg");
 
 	buf = read_file(path, NULL);
