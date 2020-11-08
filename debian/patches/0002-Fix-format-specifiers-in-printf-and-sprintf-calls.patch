@@ -1,0 +1,110 @@
+From: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+Date: Sun, 8 Nov 2020 13:28:27 +0100
+Subject: Fix format specifiers in printf() and sprintf() calls
+
+---
+ src/drmgr/drslot_chrp_mem.c  |  2 +-
+ src/drmgr/lsslot.c           |  3 ++-
+ src/errinjct/ioa_bus_error.c | 17 +++++++++--------
+ src/nvram.c                  |  2 +-
+ 4 files changed, 13 insertions(+), 11 deletions(-)
+
+diff --git a/src/drmgr/drslot_chrp_mem.c b/src/drmgr/drslot_chrp_mem.c
+index 502aa3e..5241595 100644
+--- a/src/drmgr/drslot_chrp_mem.c
++++ b/src/drmgr/drslot_chrp_mem.c
+@@ -824,7 +824,7 @@ update_drconf_node(struct dr_node *lmb, struct lmb_list_head *lmb_list,
+ 	memcpy(tmp, lmb_list->drconf_buf, lmb_list->drconf_buf_sz);
+ 	tmp += lmb_list->drconf_buf_sz;
+ 
+-	tmp += sprintf(tmp, " %s %" PRId64 " ",
++	tmp += sprintf(tmp, " %s %zu ",
+ 		       (action == ADD ? "add" : "remove"),
+ 		       sizeof(lmb->lmb_address));
+ 	memcpy(tmp, &lmb->lmb_address, sizeof(lmb->lmb_address));
+diff --git a/src/drmgr/lsslot.c b/src/drmgr/lsslot.c
+index 6828478..434e9b5 100644
+--- a/src/drmgr/lsslot.c
++++ b/src/drmgr/lsslot.c
+@@ -18,6 +18,7 @@
+  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+  */
+ 
++#include <inttypes.h>
+ #include <sys/types.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -755,7 +756,7 @@ int print_drconf_mem(struct lmb_list_head *lmb_list)
+ 		printf("%s: %s\n", lmb->drc_name,
+ 		       lmb->is_owned ? "" : "Not Owned");
+ 
+-		printf("    DRC Index: %x        Address: %lx\n",
++		printf("    DRC Index: %x        Address: %"PRIu64"\n",
+ 		       lmb->drc_index, lmb->lmb_address);
+ 		printf("    Removable: %s             Associativity: ",
+ 		       lmb->is_removable ? "Yes" : "No ");
+diff --git a/src/errinjct/ioa_bus_error.c b/src/errinjct/ioa_bus_error.c
+index 281b56b..45262e5 100644
+--- a/src/errinjct/ioa_bus_error.c
++++ b/src/errinjct/ioa_bus_error.c
+@@ -26,6 +26,7 @@
+ #include <dirent.h>
+ #include <fcntl.h>
+ #include <getopt.h>
++#include <inttypes.h>
+ #include <stdarg.h>
+ #include <stdint.h>
+ #include <stdio.h>
+@@ -446,9 +447,9 @@ int ioa_bus_error(ei_function *ei_func, int is64bit)
+ 		if (rc) {
+ 			printf("Unable to find info for %s:\n", loc_code);
+ 			if (is64bit)
+-				printf("ADDR MASK:\t\t%.16lx\n", mask);
++				printf("ADDR MASK:\t\t%"PRIu64".16lx\n", mask);
+ 			else
+-				printf("ADDR MASK:\t\t%.8lx\n", mask);
++				printf("ADDR MASK:\t\t%"PRIu64".8x\n", mask);
+ 			printf("CONFIG ADDR:\t\t%x\n", config_addr);
+ 			printf("PHB UNIT_ID:\t\t%x%.8x\n", phb_id_hi,
+ 			       phb_id_lo);
+@@ -465,9 +466,9 @@ int ioa_bus_error(ei_function *ei_func, int is64bit)
+ 		if (rc) {
+ 			printf("Unable to find info for %s:\n", sysfsname);
+ 			if (is64bit)
+-				printf("ADDR MASK:\t\t%.16lx\n", mask);
++				printf("ADDR MASK:\t\t%"PRIu64".16lx\n", mask);
+ 			else
+-				printf("ADDR MASK:\t\t%.8lx\n", mask);
++				printf("ADDR MASK:\t\t%"PRIu64".8lx\n", mask);
+ 			printf("CONFIG ADDR:\t\t%x\n", config_addr);
+ 			printf("PHB UNIT_ID:\t\t%x%.8x\n", phb_id_hi,
+ 			       phb_id_lo);
+@@ -502,11 +503,11 @@ int ioa_bus_error(ei_function *ei_func, int is64bit)
+ 			printf(" with the following data:\n\n");
+ 
+ 			if (is64bit) {
+-				printf("BUS ADDR:\t\t%.16lx\n", bus_addr);
+-				printf("ADDR MASK:\t\t%.16lx\n", mask);
++				printf("BUS ADDR:\t\t%"PRIu64".16lx\n", bus_addr);
++				printf("ADDR MASK:\t\t%"PRIu64".16lx\n", mask);
+ 			} else {
+-				printf("BUS ADDR:\t\t%.8lx\n", bus_addr);
+-				printf("ADDR MASK:\t\t%.8lx\n", mask);
++				printf("BUS ADDR:\t\t%"PRIu64".8lx\n", bus_addr);
++				printf("ADDR MASK:\t\t%"PRIu64".8lx\n", mask);
+ 			}
+ 			printf("CONFIG ADDR:\t\t%x\n", config_addr);
+ 			printf("PHB UNIT_ID:\t\t%x%.8x\n", phb_id_hi,
+diff --git a/src/nvram.c b/src/nvram.c
+index 255ec35..f051e9c 100644
+--- a/src/nvram.c
++++ b/src/nvram.c
+@@ -873,7 +873,7 @@ dump_errlog(struct nvram *nvram)
+ 	/* ToDo: what is the length of the data?  We dump until the 
+ 	   next cpu data. */
+ 	len = cpu_regs[cpu+1] - cpu_regs[cpu];
+-	printf("CPU %d Register Data (len=%x, offset=%"PRIx64")\n", cpu, len,
++	printf("CPU %d Register Data (len=%x, offset=%zu)\n", cpu, len,
+ 		cpu_regs[cpu]-p);
+ 	if (len < 4096)	/* reasonable bound */
+ 	    dump_raw_data((char *)cpu_regs[cpu], len);
