@@ -1,3 +1,10 @@
+powerpc-utils (1.3.8-2) unstable; urgency=medium
+
+  * Add patch to fix format specifiers in printf() and sprintf() calls
+  * Add patch to replace incorrect use of strncpy() with memcpy()
+
+ -- John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>  Sun, 08 Nov 2020 13:41:19 +0100
+
 powerpc-utils (1.3.8-1) unstable; urgency=medium
 
   * New upstream release
