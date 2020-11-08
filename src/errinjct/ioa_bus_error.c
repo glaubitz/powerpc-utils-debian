@@ -26,6 +26,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -446,9 +447,9 @@ int ioa_bus_error(ei_function *ei_func, int is64bit)
 		if (rc) {
 			printf("Unable to find info for %s:\n", loc_code);
 			if (is64bit)
-				printf("ADDR MASK:\t\t%.16lx\n", mask);
+				printf("ADDR MASK:\t\t%"PRIu64".16lx\n", mask);
 			else
-				printf("ADDR MASK:\t\t%.8lx\n", mask);
+				printf("ADDR MASK:\t\t%"PRIu64".8x\n", mask);
 			printf("CONFIG ADDR:\t\t%x\n", config_addr);
 			printf("PHB UNIT_ID:\t\t%x%.8x\n", phb_id_hi,
 			       phb_id_lo);
@@ -465,9 +466,9 @@ int ioa_bus_error(ei_function *ei_func, int is64bit)
 		if (rc) {
 			printf("Unable to find info for %s:\n", sysfsname);
 			if (is64bit)
-				printf("ADDR MASK:\t\t%.16lx\n", mask);
+				printf("ADDR MASK:\t\t%"PRIu64".16lx\n", mask);
 			else
-				printf("ADDR MASK:\t\t%.8lx\n", mask);
+				printf("ADDR MASK:\t\t%"PRIu64".8lx\n", mask);
 			printf("CONFIG ADDR:\t\t%x\n", config_addr);
 			printf("PHB UNIT_ID:\t\t%x%.8x\n", phb_id_hi,
 			       phb_id_lo);
@@ -502,11 +503,11 @@ int ioa_bus_error(ei_function *ei_func, int is64bit)
 			printf(" with the following data:\n\n");
 
 			if (is64bit) {
-				printf("BUS ADDR:\t\t%.16lx\n", bus_addr);
-				printf("ADDR MASK:\t\t%.16lx\n", mask);
+				printf("BUS ADDR:\t\t%"PRIu64".16lx\n", bus_addr);
+				printf("ADDR MASK:\t\t%"PRIu64".16lx\n", mask);
 			} else {
-				printf("BUS ADDR:\t\t%.8lx\n", bus_addr);
-				printf("ADDR MASK:\t\t%.8lx\n", mask);
+				printf("BUS ADDR:\t\t%"PRIu64".8lx\n", bus_addr);
+				printf("ADDR MASK:\t\t%"PRIu64".8lx\n", mask);
 			}
 			printf("CONFIG ADDR:\t\t%x\n", config_addr);
 			printf("PHB UNIT_ID:\t\t%x%.8x\n", phb_id_hi,
