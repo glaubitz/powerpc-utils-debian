@@ -1,0 +1,38 @@
+From 5dca18779342c9c75b48b3f87980aaa33168b6dc Mon Sep 17 00:00:00 2001
+From: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+Date: Tue, 9 Feb 2021 00:12:57 +0100
+Subject: [PATCH] ofpathname: Move definition of SYS_PATH from l2of_vs() to
+ l2of_scsi()
+
+SYS_PATH, which is required to calculate the plug ID of a SCSI/SATA
+host in l2of_scsi(), is actually never set in this function but in
+l2of_vd() where it is not used at all. Thus, move the definition
+from l2of_vd() to l2of_scsi() to fix the calculation of the plug
+ID in l2of_scsi().
+---
+ scripts/ofpathname | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/scripts/ofpathname b/scripts/ofpathname
+index 2ceae25..906cee9 100755
+--- a/scripts/ofpathname
++++ b/scripts/ofpathname
+@@ -573,7 +573,6 @@ l2of_vd()
+     goto_dir $PWD "devspec"
+ 
+     OF_PATH=`$CAT $PWD/devspec`
+-    SYS_PATH=$PWD
+     if [[ -z $OF_PATH ]]; then
+         err $ERR_NO_OFPATH
+     fi
+@@ -807,6 +806,7 @@ l2of_scsi()
+ 
+     if [[ -e $PWD/devspec ]]; then
+         OF_PATH=`$CAT $PWD/devspec`
++        SYS_PATH=$PWD
+     else
+         err $ERR_NO_OFPATH
+     fi
+-- 
+2.30.0
+
