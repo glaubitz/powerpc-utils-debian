@@ -3,7 +3,7 @@ Section: utils
 Priority: important
 Maintainer: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
 Uploaders: Frederic Bonnard <frederic@fr.ibm.com>
-Build-Depends: debhelper-compat (= 12), dh-autoreconf, librtas-dev, librtasevent-dev, zlib1g-dev
+Build-Depends: debhelper-compat (= 12), dh-autoreconf, libnuma-dev, librtas-dev, librtasevent-dev, zlib1g-dev
 Standards-Version: 4.5.0
 Homepage: http://powerpc-utils.ozlabs.org/
 Vcs-Browser: https://salsa.debian.org/debian/powerpc-utils
