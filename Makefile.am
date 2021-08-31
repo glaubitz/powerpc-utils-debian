@@ -47,7 +47,8 @@ man_MANS = \
 	man/errinjct.8 \
 	man/vcpustat.8 \
 	man/rtas_dbg.8 \
-	man/drmgr.8
+	man/drmgr.8 \
+	man/lparnumascore.8
 
 EXTRA_DIST += $(bin_SCRIPTS) $(sbin_SCRIPTS) $(man_MANS)
 
@@ -147,7 +148,7 @@ src_rtas_dbg_SOURCES = src/rtas_dbg.c $(pseries_platform_SOURCES)
 
 src_rtas_dbg_LDADD = -lrtas
 
-sbin_PROGRAMS += src/drmgr/drmgr src/drmgr/lsslot
+sbin_PROGRAMS += src/drmgr/drmgr src/drmgr/lsslot src/drmgr/lparnumascore
 endif
 
 src_drmgr_drmgr_SOURCES = \
@@ -155,6 +156,7 @@ src_drmgr_drmgr_SOURCES = \
 	src/drmgr/common_cpu.c \
 	src/drmgr/common_ofdt.c \
 	src/drmgr/common_pci.c \
+	src/drmgr/common_numa.c \
 	src/drmgr/drmgr.c \
 	src/drmgr/drmig_chrp_pmig.c \
 	src/drmgr/drslot_chrp_cpu.c \
@@ -171,13 +173,14 @@ noinst_HEADERS += \
 	src/drmgr/drcpu.h \
 	src/drmgr/dr.h \
 	src/drmgr/drmem.h \
+	src/drmgr/common_numa.h \
 	src/drmgr/drpci.h \
 	src/drmgr/rtas_calls.h \
 	src/drmgr/ofdt.h \
 	src/drmgr/rtas_calls.h \
 	src/drmgr/options.c
 
-src_drmgr_drmgr_LDADD = -lrtas
+src_drmgr_drmgr_LDADD = -lrtas -lnuma
 
 src_drmgr_lsslot_SOURCES = \
 	src/drmgr/lsslot.c \
@@ -186,6 +189,7 @@ src_drmgr_lsslot_SOURCES = \
 	src/drmgr/common_cpu.c \
 	src/drmgr/common_pci.c \
 	src/drmgr/common_ofdt.c \
+	src/drmgr/common_numa.c \
 	src/drmgr/rtas_calls.c \
 	src/drmgr/drslot_chrp_mem.c \
 	$(pseries_platform_SOURCES)
@@ -194,6 +198,18 @@ noinst_HEADERS += \
 	src/drmgr/options.c
 
 src_drmgr_lsslot_LDADD = -lrtas
+
+src_drmgr_lparnumascore_SOURCES = \
+	src/drmgr/lparnumascore.c \
+	src/drmgr/common.c \
+	src/drmgr/common_ofdt.c \
+	src/drmgr/common_numa.c \
+	src/drmgr/common_cpu.c \
+	src/drmgr/rtas_calls.c \
+	src/drmgr/drslot_chrp_mem.c \
+	$(pseries_platform_SOURCES)
+
+src_drmgr_lparnumascore_LDADD = -lnuma
 
 install-exec-hook:
 	cd $(DESTDIR)${sbindir} && \
