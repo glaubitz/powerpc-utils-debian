@@ -1,9 +1,9 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
-m4_define([ppu_version], 1.3.8)
+m4_define([ppu_version], 1.3.9)
 
 AC_PREREQ([2.63])
-AC_INIT([powerpc-utils], ppu_version, [nfont@linux.vnet.ibm.com])
+AC_INIT([powerpc-utils], ppu_version, [tyreld@linux.ibm.com])
 AC_CONFIG_AUX_DIR([config])
 AC_CONFIG_MACRO_DIR([m4])
 
@@ -41,6 +41,10 @@ AC_CHECK_FUNCS([memset strchr strcspn strdup strerror strrchr strstr strtol strt
 AC_CHECK_HEADER(zlib.h,
 		[AC_CHECK_LIB(z, inflate, [], [AC_MSG_FAILURE([zlib library is required for compilation])])],
 		[AC_MSG_FAILURE([zlib.h is required for compiliation])])
+
+AC_CHECK_HEADER(numa.h,
+		[AC_CHECK_LIB(numa, numa_available, [], [AC_MSG_FAILURE([numa library is required for compilation])])],
+		[AC_MSG_FAILURE([numa.h is required for compiliation])])
 
 # check for librtas
 AC_ARG_WITH([librtas],

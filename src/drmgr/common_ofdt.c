@@ -25,8 +25,16 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <endian.h>
+#include <errno.h>
 #include "dr.h"
 #include "ofdt.h"
+
+#define RTAS_DIRECTORY		"/proc/device-tree/rtas"
+#define CHOSEN_DIRECTORY	"/proc/device-tree/chosen"
+#define ASSOC_REF_POINTS	"ibm,associativity-reference-points"
+#define ASSOC_LOOKUP_ARRAYS	"ibm,associativity-lookup-arrays"
+#define ARCHITECTURE_VEC_5	"ibm,architecture-vec-5"
+#define ASSOCIATIVITY		"ibm,associativity"
 
 struct of_list_prop {
 	char	*_data;
@@ -52,6 +60,76 @@ struct drc_info {
 };
 
 struct dr_connector *all_drc_lists = NULL;
+
+/**
+ * alloc_node
+ *
+ * XXX: This doesn't do any cleanup on error conditions.  could be bad.
+ *
+ * @param drc
+ * @param dev_type
+ * @param of_path
+ * @returns pointer to node on success, NULL otherwise
+ */
+struct dr_node *
+alloc_dr_node(struct dr_connector *drc, int dev_type, const char *of_path)
+{
+	struct dr_node *node;
+
+	node = zalloc(sizeof(*node));
+	if (node == NULL)
+		return NULL;
+
+	node->dev_type = dev_type;
+	set_drc_info(node, drc);
+
+	if (of_path) {
+		get_property(of_path, "ibm,loc-code", node->loc_code,
+			     sizeof(node->loc_code));
+
+		snprintf(node->ofdt_path, DR_PATH_MAX, "%s", of_path);
+	}
+
+	return node;
+}
+
+/**
+ * free_node
+ * @brief free a list of node struct and any allocated memory they reference
+ *
+ * @param node_list list of nodes to free
+ */
+void
+free_node(struct dr_node *node_list)
+{
+	struct dr_node *node;
+
+	if (node_list == NULL)
+		return;
+
+	while (node_list) {
+		node = node_list;
+		node_list = node->next;
+
+		if (node->children)
+			free_node(node->children);
+
+		if (node->dev_type == MEM_DEV) {
+			struct mem_scn *mem_scn;
+
+			while (node->lmb_mem_scns != NULL) {
+				mem_scn = node->lmb_mem_scns;
+				node->lmb_mem_scns = mem_scn->next;
+				free(mem_scn);
+			}
+
+			if (node->lmb_of_node)
+				free(node->lmb_of_node);
+		}
+
+		free(node);
+	}
+}
 
 /**
  * get_of_list_prop
@@ -645,3 +723,152 @@ get_drc_by_index(uint32_t drc_index, struct dr_connector *drc_list)
 
 	return NULL;
 }
+
+/*
+ * Allocate and read a property, return the size.
+ * The read property is not converted to the host endianess.
+ */
+static int load_property(const char *dir, const char *prop, uint32_t **buf)
+{
+	int size;
+
+	size = get_property_size(dir, prop);
+	if (!size)
+		return -ENOENT;
+
+	*buf = zalloc(size);
+	if (!*buf) {
+		say(ERROR, "Could not allocate buffer read %s (%d bytes)\n",
+		    prop, size);
+		return -ENOMEM;
+	}
+
+	if (get_property(dir, prop, *buf, size)) {
+		free(*buf);
+		say(ERROR, "Can't retrieve %s/%s\n", dir, prop);
+		return -EINVAL;
+	}
+
+	return size;
+}
+
+/*
+ * Get the minimal common depth, based on the form 1 of the ibm,associativ-
+ * ity-reference-points property. We only support that form.
+ *
+ * We should check that the "ibm,architecture-vec-5" property byte 5 bit 0
+ * has the value of one.
+ */
+int get_min_common_depth(void)
+{
+	int size;
+	uint32_t *p;
+	unsigned char val;
+
+	size = load_property(CHOSEN_DIRECTORY, ARCHITECTURE_VEC_5, &p);
+	if (size < 0)
+		return size;
+
+	/* PAPR byte start at 1 (and not 0) but there is the length field */
+	if (size < 6) {
+		report_unknown_error(__FILE__, __LINE__);
+		free(p);
+		return -EINVAL;
+	}
+	val = ((unsigned char *)p)[5];
+	free(p);
+
+	if (!(val & 0x80))
+		return -ENOTSUP;
+
+	size = load_property(RTAS_DIRECTORY, ASSOC_REF_POINTS, &p);
+	if (size <= 0)
+		return size;
+	if (size < sizeof(uint32_t)) {
+		report_unknown_error(__FILE__, __LINE__);
+		free(p);
+		return -EINVAL;
+	}
+
+	/* Get the first entry */
+	size = be32toh(*p);
+	free(p);
+	return size;
+}
+
+int get_assoc_arrays(const char *dir, struct assoc_arrays *aa,
+		     int min_common_depth)
+{
+	int size;
+	int rc;
+	uint32_t *prop, i;
+
+	size = load_property(dir, ASSOC_LOOKUP_ARRAYS, &prop);
+	if (size < 0)
+		return size;
+
+	size /= sizeof(uint32_t);
+	if (size < 2) {
+		say(ERROR, "Could not find the associativity lookup arrays\n");
+		free(prop);
+		return -EINVAL;
+	}
+
+	aa->n_arrays = be32toh(prop[0]);
+	aa->array_sz = be32toh(prop[1]);
+
+	rc = -EINVAL;
+	if (min_common_depth > aa->array_sz) {
+		say(ERROR, "Bad min common depth or associativity array size\n");
+		goto out_free;
+	}
+
+	/* Sanity check */
+	if (size != (aa->n_arrays * aa->array_sz + 2)) {
+		say(ERROR, "Bad size of the associativity lookup arrays\n");
+		goto out_free;
+	}
+
+	aa->min_array = zalloc(aa->n_arrays * sizeof(uint32_t));
+
+	/* Keep only the most significant value */
+	for (i = 0; i < aa->n_arrays; i++) {
+		int prop_index = i * aa->array_sz + min_common_depth + 1;
+
+		aa->min_array[i] = be32toh(prop[prop_index]);
+	}
+	rc = 0;
+
+out_free:
+	free(prop);
+	return rc;
+}
+
+/*
+ * Read the associativity property and return the node id matching the
+ * min_common_depth entry.
+ */
+int of_associativity_to_node(const char *dir, int min_common_depth)
+{
+	int size;
+	uint32_t *prop;
+
+	size = load_property(dir, ASSOCIATIVITY, &prop);
+	if (size < 0)
+		return size;
+
+	if (size < 1) {
+		say(ERROR, "Could not read associativity for node %s", dir);
+		return -EINVAL;
+	}
+
+	if (be32toh(prop[0]) < min_common_depth) {
+		say(ERROR,
+		    "Too short associativity property for node %s (%d/%d)",
+		    dir, be32toh(prop[0]), min_common_depth);
+		return -EINVAL;
+	}
+
+	return be32toh(prop[min_common_depth]);
+}
+

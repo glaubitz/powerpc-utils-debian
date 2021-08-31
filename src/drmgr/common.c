@@ -38,6 +38,8 @@
 char *add_slot_fname = ADD_SLOT_FNAME;
 char *remove_slot_fname = REMOVE_SLOT_FNAME;
 
+#define DR_MAX_LOG_SZ (1 << 20)
+
 #define DR_LOG_PATH	"/var/log/drmgr"
 #define DR_LOG_PATH0	"/var/log/drmgr.0"
 
@@ -214,7 +216,7 @@ inline void
 dr_fini(void)
 {
 	struct stat sbuf;
-	int max_dr_log_sz = 25000;
+	int max_dr_log_sz = DR_MAX_LOG_SZ;
 	int rc;
 	time_t t;
 	char tbuf[128];
@@ -1462,39 +1464,43 @@ int kernel_dlpar_exists(void)
 }
 
 /**
- * do_kernel_dlpar
+ * do_kernel_dlpar_common
  * @brief Use the in-kernel dlpar capabilities to perform the requested
  *        dlpar operation.
  *
  * @param cmd command string to write to sysfs
+ * @silent_error if not 0, error is not reported, it's up to the caller
  * @returns 0 on success, !0 otherwise
  */
-int do_kernel_dlpar(const char *cmd, int cmdlen)
+int do_kernel_dlpar_common(const char *cmd, int cmdlen, int silent_error)
 {
-	int fd, rc;
-	int my_errno;
+	static int fd = -1;
+	int rc;
 
 	say(DEBUG, "Initiating kernel DLPAR \"%s\"\n", cmd);
 
 	/* write to file */
-	fd = open(SYSFS_DLPAR_FILE, O_WRONLY);
-	if (fd <= 0) {
-		say(ERROR, "Could not open %s to initiate DLPAR request\n",
-		    SYSFS_DLPAR_FILE);
-		return -1;
+	if (fd == -1) {
+		fd = open(SYSFS_DLPAR_FILE, O_WRONLY);
+		if (fd < 0) {
+			say(ERROR,
+			    "Could not open %s to initiate DLPAR request\n",
+			    SYSFS_DLPAR_FILE);
+			return -1;
+		}
 	}
 
 	rc = write(fd, cmd, cmdlen);
-	my_errno = errno;
-	close(fd);
 	if (rc <= 0) {
+		if (silent_error)
+			return (errno == 0) ? -1 : -errno;
 		/* write does not set errno for rc == 0 */
 		say(ERROR, "Failed to write to %s: %s\n", SYSFS_DLPAR_FILE,
-		    (rc == 0) ? "wrote 0 bytes" : strerror(my_errno));
+		    (rc == 0) ? "wrote 0 bytes" : strerror(errno));
 		return -1;
 	}
 
-	say(INFO, "Success\n");
+	say(DEBUG, "Success\n");
 	return 0;
 }
 

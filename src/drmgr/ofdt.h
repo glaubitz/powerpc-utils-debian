@@ -38,6 +38,12 @@ struct dr_connector {
 	struct dr_connector *all_next;
 };
 
+struct assoc_arrays {
+	uint32_t        n_arrays;
+	uint32_t        array_sz;
+	uint32_t        *min_array;
+};
+
 struct mem_scn {
 	struct mem_scn	*next;
 	int		removable;
@@ -92,6 +98,7 @@ struct dr_node {
 			uint32_t	_lmb_aa_index;
 			struct mem_scn	*_mem_scns;
 			struct of_node	*_of_node;
+			struct dr_node	*_numa_next;
 		} _smem;
 
 #define lmb_address	_node_u._smem._address
@@ -99,6 +106,7 @@ struct dr_node {
 #define lmb_aa_index	_node_u._smem._lmb_aa_index
 #define lmb_mem_scns	_node_u._smem._mem_scns
 #define lmb_of_node	_node_u._smem._of_node
+#define lmb_numa_next	_node_u._smem._numa_next
 
 		struct hea_info {
 			uint		_port_no;
@@ -169,5 +177,17 @@ int get_my_drc_index(char *, uint32_t *);
 int drc_name_to_index(const char *, struct dr_connector *);
 char * drc_index_to_name(uint32_t, struct dr_connector *);
 int get_drc_by_name(char *, struct dr_connector *, char *, char *);
+
+int get_min_common_depth(void);
+int get_assoc_arrays(const char *dir, struct assoc_arrays *aa,
+		     int min_common_depth);
+int of_associativity_to_node(const char *dir, int min_common_depth);
+
+static inline int aa_index_to_node(struct assoc_arrays *aa, uint32_t aa_index)
+{
+	if (aa_index < aa->n_arrays)
+		return aa->min_array[aa_index];
+	return -1;
+}
 
 #endif /* _OFDT_H_ */
