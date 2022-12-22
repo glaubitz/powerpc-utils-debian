@@ -1,3 +1,19 @@
+powerpc-utils (1.3.10-1) unstable; urgency=medium
+
+  * New upstream release
+  * Drop patch to replace incorrect use of strncpy()
+    with memcpy(), rejected upstream
+  * Drop patch to fix format specifiers in printf()
+    and sprintf() calls, merged upstream
+  * Remove pmac-utils from Depends for powerpc and ppc64
+    in debian/control (Closes: #927255, #1020329)
+  * Pass --disable-werror to configure script
+    in debian/rules (Closes: #1018039)
+  * Update Standards-Version to 4.6.2 in debian/control
+  * Run wrap-and-sort script to clean up debian/control
+
+ -- John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>  Thu, 22 Dec 2022 10:34:25 +0100
+
 powerpc-utils (1.3.9-1) unstable; urgency=medium
 
   * New upstream release
