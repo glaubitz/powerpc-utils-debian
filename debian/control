@@ -12,7 +12,7 @@ Vcs-Git: https://salsa.debian.org/debian/powerpc-utils.git
 Package: powerpc-utils
 Section: metapackages
 Architecture: powerpc ppc64 ppc64el
-Depends: ${misc:Depends}, powerpc-ibm-utils, pmac-utils [powerpc ppc64]
+Depends: ${misc:Depends}, powerpc-ibm-utils
 Description: utilities for maintenance of PowerPC platforms (metapackage)
  The powerpc-utils metapackage pulls in the appropriate tools for each
  Debian PowerPC port.
