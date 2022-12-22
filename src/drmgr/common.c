@@ -28,7 +28,9 @@
 #include <signal.h>
 #include <errno.h>
 #include <dirent.h>
+#ifdef __GLIBC__
 #include <execinfo.h>
+#endif
 #include <ctype.h>
 #include <sys/wait.h>
 #include <endian.h>
@@ -855,6 +857,7 @@ sighandler(int signo)
 	say(ERROR, "Received signal %d, attempting to cleanup and exit\n",
 	    signo);
 
+#ifdef __GLIBC__
 	if (log_fd) {
 		void *callstack[128];
 		int sz;
@@ -862,6 +865,7 @@ sighandler(int signo)
 		sz = backtrace(callstack, 128);
 		backtrace_symbols_fd(callstack, sz, log_fd);
 	}
+#endif
 
 	dr_fini();
 	exit(-1);
@@ -927,8 +931,10 @@ sig_setup(void)
 	if (sigaction(SIGBUS, &sigact, NULL))
 		return -1;
 
+#ifdef __GLIBC__
 	/* dummy call to backtrace to get symbol loaded */
 	backtrace(callstack, 128);
+#endif
 	return 0;
 }
 
@@ -978,6 +984,15 @@ char *php_slot_type_msg[]={
 	"PCI-E capable, Rev 4, 16x lanes with 16x lanes connected",
 	"U.2 PCI-E capable, Rev 3, 4x lanes with 4x lanes connected",
 	"U.2 PCI-E capable, Rev 4, 4x lanes with 4x lanes connected",
+	"U.2 PCI-E capable, Rev 4, 4x lanes with 2x lanes connected", 	/* 45 */
+	"PCI-E capable, Rev 5, 8x lanes with 1 lane connected",
+	"PCI-E capable, Rev 5, 8x lanes with 4x lanes connected",
+	"PCI-E capable, Rev 5, 8x lanes with 8x lanes connected",
+	"PCI-E capable, Rev 5, 16x lanes with 1 lane connected",
+	"PCI-E capable, Rev 5, 16x lanes with 4x lanes connected",	/* 50 */
+	"PCI-E capable, Rev 5, 16x lanes with 8x lanes connected",
+	"U.2 PCI-E capable, Rev 5, 4x lanes with 2x lanes connected",
+	"U.2 PCI-E capable, Rev 5, 4x lanes with 4x lanes connected",
 };
 
 char *
@@ -988,7 +1003,7 @@ node_type(struct dr_node *node)
 
 	desc_msg_num = atoi(node->drc_type);
 	if ((desc_msg_num >= 1 &&  desc_msg_num <= 8) ||
-	    (desc_msg_num >= 11 && desc_msg_num <= 44))
+	    (desc_msg_num >= 11 && desc_msg_num <= 53))
 		desc = php_slot_type_msg[desc_msg_num];
 	else {
 		switch (node->dev_type) {
@@ -1529,6 +1544,12 @@ enum drc_type to_drc_type(const char *arg)
 
 	if (!strncmp(arg, "pmig", 4))
 		return DRC_TYPE_MIGRATION;
+
+	/*
+	 * Accelerator
+	 */
+	if (!strncmp(arg, "acc", 3))
+		return DRC_TYPE_ACC;
 
 	return DRC_TYPE_NONE;
 }

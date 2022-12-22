@@ -27,6 +27,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <sched.h>
 #include <signal.h>
@@ -164,7 +165,8 @@ static int assign_cpu_sysfs_fds(int threads_in_system)
 
 	return 0;
 error:
-	fprintf(stderr, "Failed to open %s\n", sysfs_file_path);
+	fprintf(stderr, "Failed to open %s: %s\n",
+			sysfs_file_path, strerror(errno));
 	close_cpu_sysfs_fds(threads_in_system);
 	return -1;
 }
@@ -181,7 +183,7 @@ int parse_sysfs_values(void)
 	for (i = 0; cpu_sysfs_fds[i].spurr > 0; i++) {
 		rc = pread(cpu_sysfs_fds[i].spurr, (void *)line, sizeof(line), 0);
 		if (rc == -1) {
-			fprintf(stderr, "Failed to /sys/devices/system/cpu/cpu%d/spurr\n",
+			fprintf(stderr, "Failed to read /sys/devices/system/cpu/cpu%d/spurr\n",
 					cpu_sysfs_fds[i].cpu);
 			goto check_cpu_hotplug;
 		}
@@ -191,7 +193,7 @@ int parse_sysfs_values(void)
 
 		rc = pread(cpu_sysfs_fds[i].idle_purr, (void *)line, sizeof(line), 0);
 		if (rc == -1) {
-			fprintf(stderr, "Failed to /sys/devices/system/cpu/cpu%d/idle_purr\n",
+			fprintf(stderr, "Failed to read /sys/devices/system/cpu/cpu%d/idle_purr\n",
 					cpu_sysfs_fds[i].cpu);
 			goto check_cpu_hotplug;
 		}
@@ -201,7 +203,7 @@ int parse_sysfs_values(void)
 
 		rc = pread(cpu_sysfs_fds[i].idle_spurr, (void *)line, sizeof(line), 0);
 		if (rc == -1) {
-			fprintf(stderr, "Failed to /sys/devices/system/cpu/cpu%d/idle_spurr\n",
+			fprintf(stderr, "Failed to read /sys/devices/system/cpu/cpu%d/idle_spurr\n",
 					cpu_sysfs_fds[i].cpu);
 			goto check_cpu_hotplug;
 		}
@@ -795,6 +797,10 @@ void get_node_name(struct sysentry *se, char *buf)
 
 void get_partition_name(struct sysentry *se, char *buf)
 {
+	if (se->value[0] != '\0') {
+		strcpy(buf, se->value);
+		return;
+	}
 	return get_name("/proc/device-tree/ibm,partition-name", buf);
 }
 
@@ -834,7 +840,7 @@ void get_mem_total(struct sysentry *se, char *buf)
 	*nl = '\0';
 
 	if (o_legacy) {
-		sprintf(buf, "%d %s", atoi(mem) / 1024, "MB");
+		sprintf(buf, "%lld %s", atoll(mem) / 1024, "MB");
 	} else {
 		sprintf(buf, "%s %s", mem, unit);
 	}
