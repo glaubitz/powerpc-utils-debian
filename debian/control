@@ -3,7 +3,12 @@ Section: utils
 Priority: important
 Maintainer: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
 Uploaders: Frederic Bonnard <frederic@fr.ibm.com>
-Build-Depends: debhelper-compat (= 12), dh-autoreconf, libnuma-dev, librtas-dev, librtasevent-dev, zlib1g-dev
+Build-Depends: debhelper-compat (= 12),
+               dh-autoreconf,
+               libnuma-dev,
+               librtas-dev,
+               librtasevent-dev,
+               zlib1g-dev
 Standards-Version: 4.6.2
 Homepage: http://powerpc-utils.ozlabs.org/
 Vcs-Browser: https://salsa.debian.org/debian/powerpc-utils
@@ -12,15 +17,15 @@ Vcs-Git: https://salsa.debian.org/debian/powerpc-utils.git
 Package: powerpc-utils
 Section: metapackages
 Architecture: powerpc ppc64 ppc64el
-Depends: ${misc:Depends}, powerpc-ibm-utils
+Depends: powerpc-ibm-utils, ${misc:Depends}
 Description: utilities for maintenance of PowerPC platforms (metapackage)
  The powerpc-utils metapackage pulls in the appropriate tools for each
  Debian PowerPC port.
 
 Package: powerpc-ibm-utils
 Architecture: powerpc ppc64 ppc64el
-Depends: ${shlibs:Depends}, ${misc:Depends}, bash (>= 3), bc
-Suggests: sysfsutils, ipmitool
+Depends: bash (>= 3), bc, ${misc:Depends}, ${shlibs:Depends}
+Suggests: ipmitool, sysfsutils
 Description: utilities for maintenance of IBM PowerPC platforms
  The powerpc-ibm-utils package provides the utilities listed below
  which are intended for the maintenance of PowerPC platforms. Further
