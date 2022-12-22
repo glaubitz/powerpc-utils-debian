@@ -1,6 +1,6 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
-m4_define([ppu_version], 1.3.9)
+m4_define([ppu_version], 1.3.10)
 
 AC_PREREQ([2.63])
 AC_INIT([powerpc-utils], ppu_version, [tyreld@linux.ibm.com])
@@ -33,7 +33,7 @@ AC_TYPE_UINT8_T
 # Checks for library functions.
 AC_FUNC_FORK
 AC_FUNC_LSTAT_FOLLOWS_SLASHED_SYMLINK
-AC_FUNC_MALLOC
+#AC_FUNC_MALLOC
 AC_FUNC_MKTIME
 AC_CHECK_FUNCS([memset strchr strcspn strdup strerror strrchr strstr strtol strtoul strtoull gettimeofday])
 
@@ -117,5 +117,5 @@ LOCAL_CHECK_FLAGS
 
 AC_CONFIG_FILES([Makefile powerpc-utils.spec systemd/smt_off.service])
 AC_CONFIG_FILES([systemd/smtstate.service scripts/smtstate])
-AC_CONFIG_FILES([systemd/hcn-init.service])
+AC_CONFIG_FILES([systemd/hcn-init.service systemd/hcn-init.service.suse])
 AC_OUTPUT

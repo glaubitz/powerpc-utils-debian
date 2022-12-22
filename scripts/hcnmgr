@@ -21,15 +21,18 @@
 #	   support live partition migration with SR_IOV
 #
 
-VERSION="1.0"
+FEATURES="vnic wicked"
 PATH=$PATH:/bin:/usr/bin:/sbin:/usr/sbin
 BOND_BASEPATH="/sys/class/net"
+BOND_MODPROBE_OPTS="max_bonds=0"
 BONDOPTIONS="mode=1,miimon=100,fail_over_mac=2"
 IFCONFIG_PATH="/etc/sysconfig/network-scripts"
 PSERIES_PLATFORM=$(dirname "$0")/pseries_platform
 DT_PATH="/proc/device-tree"
 HCNMGR="hcnmgr"
 HCNCMD=""
+HCNTRACE=""
+STATEDIR="/var/lib/powerpc-utils/hcnmgr"
 LOG_FILE="/var/log/hcnmgr"
 HCN_LOGGING_LEVEL=DEBUG
 HCNID=0
@@ -39,7 +42,9 @@ MODE=""
 PHYSLOC=""
 DEVPATH=""
 VIO_TYPE=""
-VNIC_SPT=""
+DISTRO=""
+SERVICE=""
+
 
 # Usage statements
 usage() {
@@ -64,6 +69,7 @@ usage() {
 	echo ""
 	echo "Optional arguments."
 	echo "  -s        scan device-tree and configure HCN"
+	echo "  -x        trace hcnmgr script execution"
 	echo "  -V        Display version information and exit"
 	echo "  -h        Display this help information and exit"
 	echo ""
@@ -71,9 +77,9 @@ usage() {
 
 # Display current version of hybrid network support
 show_version() {
-	echo "$HCNMGR: Version $VERSION"
+	echo "$HCNMGR (features: $FEATURES)"
 	echo "Written by: Mingming Cao <mingming.cao@ibm.com>"
-	hcnlog INFO "HCN_VERSION=$VERSION"
+	hcnlog INFO "$HCNMGR (features: $FEATURES)"
 }
 
 # Error codes
@@ -84,7 +90,7 @@ E_BUSY=16         # Device busy
 E_ENODEV=19       # Failed get device name
 E_NOMODULE=5      # Failed to load bonding module
 E_INVAL_DEV=6     # Vdevice not supported
-E_ENETUNREACH=101 # No network management command nmcli
+E_ENETUNREACH=101 # No supported network service enabled or management command not found
 
 #
 # err
@@ -94,6 +100,7 @@ E_ENETUNREACH=101 # No network management command nmcli
 err() {
 	local e_mesg
 	local eno=$1
+	local msg=$2
 
 	case $eno in
 	"$E_INVAL")
@@ -115,7 +122,7 @@ err() {
 		e_mesg="$HCNCMD:error code $eno, Failed to load bonding module"
 		;;
 	"$E_ENETUNREACH")
-		e_mesg="$HCNCMD:error code $eno, nmcli command not installed"
+		e_mesg="$HCNCMD:error code $eno, ${msg:-No supported network service enabled or management command not found}"
 		;;
 	*)
 		e_mesg="$HCNCMD:error code $eno"
@@ -155,6 +162,34 @@ hcnlog() {
 
 }
 
+# function xdump4:
+#	Print first 4 bytes of specified file in hexadecimal
+xdump4() {
+	hexdump -n 4 -ve '/1 "%02x"' "$1"
+}
+
+hcnid_state_create()
+{
+	local hcnid="$1"
+	[ "X$hcnid" != "X" ] && mkdir -p -- "$STATEDIR/$hcnid"
+}
+hcnid_state_remove()
+{
+	local hcnid="$1"
+	[ "X$hcnid" != "X" ] && rm -rf -- "$STATEDIR/$hcnid"
+}
+hcnid_state_list()
+{
+	local revert
+
+	shopt -q nullglob ; revert=$?
+	shopt -s nullglob
+	for dir in "$STATEDIR"/* ; do
+		echo "${dir##*/}"
+	done
+	[ $revert -eq 0 ] || shopt -u nullglob
+}
+
 # function search_dev:
 #	Given DRX_INDEX, Search for device-tree, looking for migratable SR_IOV
 #	backend vnic or ibmveth device to configure hybrid network
@@ -168,7 +203,7 @@ search_dev() {
 	# Look at pci ethernet devices
 	for pci_dev in "$DT_PATH"/pci*; do
 		[ -d "$pci_dev" ] || continue
-		index=$(hexdump -n 4 -e '/1 "%02x"' "$pci_dev"/ibm,my-drc-index)
+		index=$(xdump4 "$pci_dev"/ibm,my-drc-index)
 		if [[ $index != "$1" ]]; then
 			continue
 		fi
@@ -189,7 +224,7 @@ search_dev() {
 	hcnlog DEBUG "search vnic device with drc_index $1"
 	for dev in "$DT_PATH"/vdevice/vnic*; do
 		[ -d "$dev" ] || continue
-		index=$(hexdump -n 4 -e '/1 "%02x"' "$dev"/ibm,my-drc-index)
+		index=$(xdump4 "$dev"/ibm,my-drc-index)
 		if [[ $index == "$1" ]]; then
 			hcnlog DEBUG "found matching drc_index $index in $dev"
 			if [ -e "$dev"/ibm,hcn-id ] && get_dev_hcn "$dev"; then
@@ -205,7 +240,7 @@ search_dev() {
 	hcnlog DEBUG "search ibmveth device with drc_index $1"
 	for dev in "$DT_PATH"/vdevice/l-lan*; do
 		[ -d "$dev" ] || continue
-		index=$(hexdump -n 4 -e '/1 "%02x"' "$dev"/ibm,my-drc-index)
+		index=$(xdump4 "$dev"/ibm,my-drc-index)
 		if [[ $index == "$1" ]]; then
 			hcnlog DEBUG "found matching drc_index $index in $dev"
 			if [ -e "$dev"/ibm,hcn-id ] && get_dev_hcn "$dev"; then
@@ -233,7 +268,7 @@ get_dev_hcn() {
 	local dev=$1
 
 	hcnlog DEBUG "get_dev_hcn: enter $1"
-	HCNID=$(hexdump -n 4 -e '/1 "%02x"' "$dev"/ibm,hcn-id)
+	HCNID=$(xdump4 "$dev"/ibm,hcn-id)
 	MODE=$(tr -d '\0' <"$dev"/ibm,hcn-mode)
 	PHYSLOC=$(tr -d '\0' <"$dev"/ibm,loc-code)
 	DEVPATH=$1
@@ -270,13 +305,13 @@ get_dev_hcn() {
 }
 
 #
-# function do_config_vdevice
+# function do_config_vdevice_nm
 #	configure or create HCN (active-backup bonding)
 #	add device as bonding slave
 #
 #	On enter, the vdevice name, mode, hcnid and drcindex are set
-#
-do_config_vdevice() {
+#	Based on Network Manager nmcli
+do_config_vdevice_nm() {
 	hcnlog DEBUG "do_config_vdevice: enter"
 
 	BONDNAME=bond$HCNID
@@ -340,29 +375,91 @@ do_config_vdevice() {
 	# if the device is primary, and link is up, force it as primary se
 	if [[ $MODE == "primary" ]]; then
 		hcnlog INFO "Change bonding primary slave to $DEVNAME"
-		echo "$DEVNAME" >"$BOND_PATH"/active_slave
+		echo "$DEVNAME" >"$BOND_PATH"/primary
 	fi
 
 	hcnlog DEBUG "do_config_vdevice: exit"
 	return $E_SUCCESS
 }
 
+# function do_config_vdevice_wicked
+#	configure or create HCN (active-backup bonding)
+#	add device as bonding slave
 #
-# function cfghcn
+#	On enter, the vdevice name, mode, hcnid and drcindex are set
+#
+do_config_vdevice_wicked() {
+	hcnlog DEBUG "do_config_vdevice: enter"
+
+	BONDNAME=bond$HCNID
+	BOND_PATH=$BOND_BASEPATH/$BONDNAME/bonding
+
+	hcnlog DEBUG "Check if there is bond $BONDNAME with hcn id $HCNID"
+
+	if ! suse_ifcfg_is_bond_master "$BONDNAME"; then
+		hcnlog INFO "create bonding for $BONDNAME with bond.options $BONDOPTIONS "
+		# Note: wicked needs spaces in BONDING_MODULE_OPTS as comma is
+		#       used/reserved to separate multiple arp_ip_targets, thus
+		#	this could result in invalid options...:
+		suse_ifcfg_bond_create "$BONDNAME" "" "${BONDOPTIONS//,/ }"
+	fi
+
+	# Add device to the bond
+	hcnlog INFO "suse_ifcfg_bond_add_slave $BONDNAME $DEVNAME"
+	if ! suse_ifcfg_bond_add_slave "$BONDNAME" "$DEVNAME"; then
+		hcnlog DEBUG "enslave $DEVNAME failed"
+		return $E_ENODEV
+	fi
+
+	# if the device is primary, adjust it in the config
+	if [[ $MODE == "primary" ]]; then
+		hcnlog INFO "Change bonding primary slave to $DEVNAME"
+		suse_ifcfg_bond_set_primary "$BONDNAME" "$DEVNAME"
+	fi
+
+	# Prepare configuration while hcn-init.service run, but do not try
+	# to apply when the wicked.service aka network.service is active.
+	# The network.service start at boot (or next one) will apply it.
+	if systemctl is-active -q wicked.service ; then
+		# Apply the config changes to wicked
+		hcnlog DEBUG "Bring up the $BONDNAME interface"
+		wicked ifup "$BONDNAME"
+
+		# workaround: make sure the primary gets applied
+		# so kernel reselect it as primary
+		if [[ $MODE == "primary" ]]; then
+			echo "$DEVNAME" > "$BOND_PATH/primary"
+		fi
+	fi
+
+	hcnlog DEBUG "do_config_vdevice: exit"
+	return $E_SUCCESS
+}
+
+do_config_vdevice() {
+	hcnid_state_create "$HCNID"
+	case $SERVICE in
+		NetworkManager.service)
+			do_config_vdevice_nm
+			;;
+		wicked.service)
+			do_config_vdevice_wicked
+			;;
+	esac
+}
+
+#
+# function cfghcn_nm
 #	Given device DRC_INDEX, configure or create HCN (active-backup bonding)
 #	add device as bonding slave
 #
 # $1 DRC_INDEX of the hybrid network device
 #
-cfghcn() {
+cfghcn_nm() {
 	local retry=3
 
 	hcnlog DEBUG "cfghcn: enter $1"
 	search_dev "$1"
-	if [[ $VIO_TYPE == "VNIC" && $VNIC_SPT == "OFF" ]]; then
-		hcnlog WARN "Backing device $VIO_TYPE for Migratable VF is not supported in hcnmgr version $VERSION"
-		err $E_INVAL_DEV
-	fi
 	while [ $retry != 0 ]; do
 		hcnlog DEBUG "cfg_hcn: calling do_confi_vdevice to enslave $DEVNAME to HNV"
 		if do_config_vdevice; then
@@ -384,6 +481,65 @@ cfghcn() {
 
 	return $E_SUCCESS
 }
+
+#
+# function cfghcn_wicked
+#	Given device DRC_INDEX, configure or create HCN (active-backup bonding)
+#	add device as bonding slave
+#
+# $1 DRC_INDEX of the hybrid network device
+#
+cfghcn_wicked() {
+
+	hcnlog DEBUG "cfghcn wicked: enter $1"
+
+	hcnlog DEBUG "cfg_hcn wicked: wait for udev events complete, udevadm settle"
+	udevadm settle
+	search_dev "$1"
+
+	hcnlog DEBUG "cfg_hcn: calling do_confi_vdevice to enslave $DEVNAME to HNV"
+	do_config_vdevice
+
+	hcnlog DEBUG "cfghcn wicked: exit"
+	return $E_SUCCESS
+}
+
+#
+# function cfghcn
+#	Given device DRC_INDEX, configure or create HCN (active-backup bonding)
+#	add device as bonding slave
+#
+# $1 DRC_INDEX of the hybrid network device
+#
+cfghcn() {
+	hcnlog DEBUG "cfghcn: enter $1"
+
+	case $SERVICE in
+		NetworkManager.service)
+			cfghcn_nm $1
+			;;
+		wicked.service)
+			cfghcn_wicked $1
+			;;
+	esac
+
+	hcnlog DEBUG "cfghcn: exit"
+	return $E_SUCCESS
+}
+
+rmhcn_nm() {
+	for connection in $(nmcli -f NAME con show | grep "$BONDNAME"); do
+		hcnlog INFO "Delete bonding connection $connection"
+		nmcli con delete "$connection"
+	done
+}
+
+rmhcn_wicked() {
+	hcnlog INFO "Delete bonding $BONDNAME"
+	wicked ifdown "$BONDNAME"
+	suse_ifcfg_bond_delete "$BONDNAME"
+}
+
 #
 # function rmhcn
 #	Given HCNID, remove HCN
@@ -402,14 +558,37 @@ rmhcn() {
 	fi
 
 	hcnlog INFO "rmhcn: delete bond $BONDNAME and slaves "
-	for connection in $(nmcli -f NAME con show | grep "$BONDNAME"); do
-		hcnlog INFO "Delete bonding connection $connection"
-		nmcli con delete "$connection"
-	done
+	case $SERVICE in
+		NetworkManager.service)
+			rmhcn_nm
+			;;
+		wicked.service)
+			rmhcn_wicked
+			;;
+	esac
+	hcnid_state_remove "$HCNID"
 	hcnlog DEBUG "rmhcn: exit"
 	return $E_SUCCESS
 }
 
+qrydev_nm() {
+	if ! nmcli -f DEVICE con show --active | grep -q "$DEVNAME"; then
+		hcnlog DEBUG "network connection $BONDNAME-$DEVNAME is inactive or nonexist"
+		hcnlog DEBUG "HCNID $HCNID devname $DEVNAME mode $MODE physloc $PHYSLOC DEVPATH $DEVPATH"
+		hcnlog DEBUG "qryhcn: exit"
+		# In this case, tell HMC to do rmdev and okay to migrate
+		return $E_SUCCESS
+	fi
+}
+qrydev_wicked() {
+	if ! wicked ifstatus $DEVNAME |grep link |grep up; then
+		hcnlog DEBUG "network connection $BONDNAME-$DEVNAME is inactive or nonexist"
+		hcnlog DEBUG "HCNID $HCNID devname $DEVNAME mode $MODE physloc $PHYSLOC DEVPATH $DEVPATH"
+		hcnlog DEBUG "qryhcn: exit"
+		# In this case, tell HMC to do rmdev and okay to migrate
+		return $E_SUCCESS
+	fi
+}
 #
 #function qrydev
 #	Called by HMC right before migration, to see if it is safe to
@@ -437,13 +616,14 @@ qrydev() {
 	BOND_PATH=$BOND_BASEPATH/$BONDNAME/bonding
 
 	hcnlog DEBUG "check if the network interface for this SR_IOV is not up, return success"
-	if ! nmcli -f DEVICE con show --active | grep -q "$DEVNAME"; then
-		hcnlog DEBUG "network connection $BONDNAME-$DEVNAME is inactive or nonexist"
-		hcnlog DEBUG "HCNID $HCNID devname $DEVNAME mode $MODE physloc $PHYSLOC DEVPATH $DEVPATH"
-		hcnlog DEBUG "qryhcn: exit"
-		# In this case, tell HMC to do rmdev and okay to migrate
-		return $E_SUCCESS
-	fi
+	case $SERVICE in
+		NetworkManager.service)
+			qrydev_nm
+			;;
+		wicked.service)
+			qrydev_wicked
+			;;
+	esac
 
 	hcnlog DEBUG "check if there is bond for this $HCNID"
 	if [ ! -d "$BOND_PATH" ]; then
@@ -476,9 +656,22 @@ qrydev() {
 #
 show_hcnstatus() {
 	hcnlog DEBUG "log connection and device status to $LOG_FILE"
-	nmcli connection show >>$LOG_FILE
-	nmcli device status >>$LOG_FILE
-	ip addr show >>$LOG_FILE
+
+	case $SERVICE in
+		NetworkManager.service)
+			nmcli connection show >>$LOG_FILE
+			nmcli device status >>$LOG_FILE
+			;;
+		wicked.service)
+			if systemctl is-active -q "$SERVICE" ; then
+				wicked ifstatus all >>$LOG_FILE
+			else
+				hcnlog DEBUG "network service $SERVICE is currently inactive"
+			fi
+			;;
+	esac
+
+	ip -d addr show >>$LOG_FILE
 }
 
 #
@@ -488,6 +681,23 @@ show_hcnstatus() {
 # $1 network device name
 check_eth() {
 	nmcli -f DEVICE con show | grep -q "$1"
+}
+
+rmdev_nm() {
+	hcnlog DEBUG "rmdev_nm: enter"
+	if check_eth "$DEVNAME"; then
+		hcnlog INFO "rmdev: delete $BONDNAME-$DEVNAME connection"
+		nmcli con delete "$BONDNAME-$DEVNAME"
+	fi
+}
+
+rmdev_wicked() {
+	hcnlog DEBUG "rmdev_wicked: enter"
+	suse_ifcfg_bond_del_slave "$BONDNAME" "$DEVNAME"
+	wicked ifdown "$DEVNAME"
+	wicked ifup "$BONDNAME"
+	hcnlog DEBUG "rmdev_wicked: exit"
+	return $E_SUCCESS
 }
 
 #
@@ -507,16 +717,45 @@ rmdev() {
 	if [[ $HCNID != "$2" ]]; then
 		hcnlog WARN "rmdev: mismatch drc index $1 HCNID $2"
 	fi
-	if check_eth "$DEVNAME"; then
-		hcnlog INFO "rmdev: delete $BONDNAME-$DEVNAME connection"
-		nmcli con delete "$BONDNAME-$DEVNAME"
-	fi
+
+	case $SERVICE in
+		NetworkManager.service)
+			rmdev_nm
+			;;
+		wicked.service)
+			rmdev_wicked
+			;;
+	esac
+
 	hcnlog DEBUG "rmdev: exit"
 	return $E_SUCCESS
 }
 
+scanhcn_cleanup_old_hnv_nm() {
+	# After online from inactive migration, destination
+	# LPAR may have same mvf devname but associated with different
+	# bonding than from source LPAR
+	# clean up expired bonding SR_IOV connections
+
+
+	for cfg in $(ls $IFCONFIG_PATH | grep "$DEVNAME" | grep "bond"); do
+		hid=$(echo "$cfg" | sed -e 's/ifcfg-//' | cut -d '-' -f 1 | sed -e 's/bond//')
+		if [ -e "$IFCONFIG_PATH/ifcfg-$DEVNAME" ]; then
+			rm "$IFCONFIG_PATH/ifcfg-$DEVNAME"
+		fi
+		if [[ $hid != "" && $hid != "$HCNID" ]] ; then
+			hcnlog INFO "Delete dead bonding slave ifcfg file $IFCONFIG_PATH/$cfg"
+			rm $IFCONFIG_PATH/"$cfg"
+
+			if nmcli -f NAME con show | grep -q "bond$hid-$DEVNAME\s"; then
+				hcnlog INFO "Delete dead bonding connection $connection"
+				nmcli con delete "bond$hid-$DEVNAME"
+			fi
+		fi
+	done
+}
 #
-# function scanhcn
+# function scanhcn_nm
 #	HMC supports adding migratable sr-iov when LPAR is inactive. This allows LPAR
 #	can be migrated when inactive with SR_IOV VFS.	It will set the
 #	migratable sr-iov device and it's backup vdevice vnic or veth with
@@ -532,8 +771,8 @@ rmdev() {
 #	For each matching primary and backup virtual device with same ibm property
 #	ibm,hcn-id, if the hybrid network has not been created, create HCN
 #	(active-backup bonding) for them.
-#s
-scanhcn() {
+#
+scanhcn_nm() {
 	local HcnIds=()
 
 	hcnlog DEBUG "scanhcn: on boot scan for hybrid virtual network starts"
@@ -548,27 +787,11 @@ scanhcn() {
 			[ -d "$dev" ] || continue
 			if [ -e "$dev"/ibm,hcn-id ] && get_dev_hcn "$dev"; then
 				hcnlog DEBUG "scanhcn found sr-iov device with hcnid "
-
-				# After online from inactive migration, destination
-				# LPAR may have same mvf devname but associated with different
-				# bonding than from source LPAR
-				# clean up expired bonding SR_IOV connections
-
-				for cfg in $(ls $IFCONFIG_PATH | grep "$DEVNAME" | grep "bond"); do
-					hid=$(echo "$cfg" | sed -e 's/ifcfg-//' | cut -d '-' -f 1 | sed -e 's/bond//')
-					if [ -e "$IFCONFIG_PATH/ifcfg-$DEVNAME" ]; then
-						rm "$IFCONFIG_PATH/ifcfg-$DEVNAME"
-					fi
-					if [[ $hid != "" && $hid != "$HCNID" ]] ; then
-						hcnlog INFO "Delete dead bonding slave ifcfg file $IFCONFIG_PATH/$cfg"
-						rm $IFCONFIG_PATH/"$cfg"
-						if nmcli -f NAME con show | grep -q "bond$hid-$DEVNAME\s"; then
-							hcnlog INFO "Delete dead bonding connection $connection"
-							nmcli con delete "bond$hid-$DEVNAME"
-						fi
-					fi
-				done
-
+				case $SERVICE in
+					NetworkManager.service)
+						scanhcn_cleanup_old_hnv_nm
+						;;
+				esac
 				hcnlog INFO "scanhcn configure HCN and sr-iov device"
 				do_config_vdevice
 				# Save found HCN ids in array HcnIds
@@ -590,20 +813,18 @@ scanhcn() {
 		fi
 	done
 
-	if [[ $VNIC_SPT != "OFF" ]]; then
-		hcnlog DEBUG "search vnic device with ibm,hcn-id propterty......"
-		# Look at every vNIC device with ibm,hcn-id propterty
-		# join or create bond for this hcnid if not exist, add vnic device as
-		# slave for this bond accosiated with hcnid, if not already to
-		for dev in "$DT_PATH"/vdevice/vnic*; do
-			[ -d "$dev" ] || continue
-			if [ -e "$dev"/ibm,hcn-id ] && get_dev_hcn "$dev"; then
-				hcnlog DEBUG "scanhcn found vnic device with hcnid "
-				hcnlog INFO "scanhcn configure HCN and vnic device"
-				do_config_vdevice
-			fi
-		done
-	fi
+	hcnlog DEBUG "search vnic device with ibm,hcn-id propterty......"
+	# Look at every vNIC device with ibm,hcn-id propterty
+	# join or create bond for this hcnid if not exist, add vnic device as
+	# slave for this bond accosiated with hcnid, if not already to
+	for dev in "$DT_PATH"/vdevice/vnic*; do
+		[ -d "$dev" ] || continue
+		if [ -e "$dev"/ibm,hcn-id ] && get_dev_hcn "$dev"; then
+			hcnlog DEBUG "scanhcn found vnic device with hcnid "
+			hcnlog INFO "scanhcn configure HCN and vnic device"
+			do_config_vdevice
+		fi
+	done
 
 	if [ ${#HcnIds[@]} -eq 0 ]; then
 		hcnlog DEBUG "scanhcn: scan for hybrid virtual network finished"
@@ -615,18 +836,210 @@ scanhcn() {
 
 	# list of all HCN ids
 	ids="${HcnIds[*]}"
-	# After inactive migration, LPAR may have old bonding connections
-	# with network device on original LPAR
-    # clean up dead bonding connections
-	for connection in $(nmcli -f NAME con show | grep "${ids// /\\|}"); do
-		dev=$(echo "$connection" | cut -d '-' -f 2)
-		if [[ $dev != "NAME" && ! -e /sys/class/net/"$dev" ]]; then
-			hcnlog INFO "Delete dead bonding connection $connection"
-			nmcli con delete "$connection"
+	case $SERVICE in
+		NetworkManager.service)
+		# After inactive migration, LPAR may have old bonding connections
+		# with network device on original LPAR
+		# clean up dead bonding connections
+		for connection in $(nmcli -f NAME con show | grep "${ids// /\\|}"); do
+			dev=$(echo "$connection" | cut -d '-' -f 2)
+			if [[ $dev != "NAME" && ! -e /sys/class/net/"$dev" ]]; then
+				hcnlog INFO "Delete dead bonding connection $connection"
+				nmcli con delete "$connection"
+			fi
+		done
+		;;
+	esac
+
+	hcnlog DEBUG "scanhcn: scan for hybrid virtual network finished"
+}
+
+#
+# function scanhcn_wicked
+#
+#	This function will scan the device-tree to find new SR-IOV vfs and virtual devices
+#	that has configured as migratable sr-iov device or as backup vdevice during LPAR
+#	is inactive (or during manual 'hcnmgr -s' call).
+#
+scanhcn_wicked() {
+	local hcnid hcnids=()
+	local -A hcn_devs hcn_primary
+	local file dev
+
+	hcnlog DEBUG "scanhcn: on boot scan for hybrid virtual network starts"
+
+	udevadm settle
+
+	hcnlog DEBUG "search sr_iov device with ibm,hcn-id propterty......"
+	# Look at pci ethernet devices for SR_IOV VFs with ibm,hcn-id propterty
+	# join or Create bond for this hcnid if not exist, add SR-IOVs as primary
+	# slave for this bond accosiated with hcnid, if not already to
+	for pci_dev in "$DT_PATH"/pci*; do
+		[ -d "$pci_dev" ] || continue
+		for dev in "$pci_dev"/ethernet*; do
+			[ -d "$dev" ] || continue
+			if [ -e "$dev"/ibm,hcn-id ] && get_dev_hcn "$dev"; then
+				hcnlog DEBUG "scanhcn found $MODE sr-iov device $DEVNAME with hcnid  $HCNID"
+				# Collect what we have found
+				hcnids=($(suse_wlist_uniq ${hcnids[*]} $HCNID))
+				hcn_devs[$HCNID]=$(suse_wlist_uniq ${hcn_devs[$HCNID]} $DEVNAME)
+				[ "X$MODE" = "Xprimary" ] && hcn_primary[$HCNID]="$DEVNAME"
+			fi
+		done
+	done
+
+	hcnlog DEBUG "search ibmveth device with ibm,hcn-id propterty......"
+	# Look at every vNIC device with ibm,hcn-id propterty
+	# join or create bond for this hcnid if not exist, add vnic device as
+	# slave for this bond accosiated with hcnid, if not already to
+	for dev in "$DT_PATH"/vdevice/l-lan*; do
+		[ -d "$dev" ] || continue
+		if [ -e "$dev"/ibm,hcn-id ] && get_dev_hcn "$dev"; then
+			hcnlog DEBUG "scanhcn found $MODE veth device $DEVNAME with hcnid $HCNID"
+			# Collect what we have found
+			hcnids=($(suse_wlist_uniq ${hcnids[*]} $HCNID))
+			hcn_devs[$HCNID]=$(suse_wlist_uniq ${hcn_devs[$HCNID]} $DEVNAME)
+			[ "X$MODE" = "Xprimary" ] && hcn_primary[$HCNID]="$DEVNAME"
+		fi
+	done
+
+	hcnlog DEBUG "search vnic device with ibm,hcn-id propterty......"
+	# Look at every vNIC device with ibm,hcn-id propterty
+	# join or create bond for this hcnid if not exist, add vnic device as
+	# slave for this bond accosiated with hcnid, if not already to
+	for dev in "$DT_PATH"/vdevice/vnic*; do
+		[ -d "$dev" ] || continue
+		if [ -e "$dev"/ibm,hcn-id ] && get_dev_hcn "$dev"; then
+			hcnlog DEBUG "scanhcn found $MODE vnic device $DEVNAME with hcnid $HCNID"
+			# Collect what we have found
+			hcnids=($(suse_wlist_uniq ${hcnids[*]} $HCNID))
+			hcn_devs[$HCNID]=$(suse_wlist_uniq ${hcn_devs[$HCNID]} $DEVNAME)
+			[ "X$MODE" = "Xprimary" ] && hcn_primary[$HCNID]="$DEVNAME"
+		fi
+	done
+
+	# Cleanup (and shutdown) obsolete bondings or unenslave obsolete slaves
+	# This can happen when the LPAR has been shut down and reconfigured at
+	# next boot (or as attempt to fix via manual rescan when something went
+	# wrong before).
+	for hcnid in $(hcnid_state_list) ; do
+		local bond="bond$hcnid"
+		if suse_wlist_find "$hcnid" "${hcnids[@]}" ; then
+			local devices=(${hcn_devs[$hcnid]})
+			for dev in $(suse_ifcfg_bond_get_slaves "$bond") ; do
+				suse_wlist_find "$dev" "${devices[@]}" && continue
+				suse_ifcfg_bond_del_slave "$bond" "$dev"
+				if systemctl is-active -q wicked.service ; then
+					wicked ifdown "$dev"
+				fi
+			done
+		else
+			suse_ifcfg_bond_delete "$bond"
+			if systemctl is-active -q wicked.service ; then
+				wicked ifdown "$bond"
+			fi
+			hcnid_state_remove "$hcnid"
+		fi
+	done
+
+	# Configure (and set up) actual bonds with current device list
+	for hcnid in "${hcnids[@]}" ; do
+		local bond="bond$hcnid"
+		local primary="${hcn_primary[$hcnid]}"
+		local devices="${hcn_devs[$hcnid]}"
+
+		hcnid_state_create "$hcnid"
+		hcnlog INFO "scanhcn configure HCN $bond with devices '$devices'"
+		if suse_ifcfg_bond_modify "$bond" "$devices" ; then
+			hcnlog INFO "scanhcn configured bond '$bond' config with devices '$devices'"
+		else
+			hcnlog INFO "scanhcn failed to configure bond '$bond' with devices '$devices'"
+			continue
+		fi
+		if suse_ifcfg_bond_set_primary "$bond" "$primary" ; then
+			hcnlog INFO "scanhcn adjusted bond '$bond' config primary to '$primary'"
+		else
+			hcnlog INFO "scanhcn failed to adjust bond '$bond' config primary to '$primary'"
+		fi
+
+		if systemctl is-active -q wicked.service ; then
+			hcnlog INFO "scanhcn starting HCN bonding: $bond"
+			wicked ifup "$bond"
+		else
+			hcnlog INFO "scanhcn omits HCN bondings reload due to inactive network"
+			# at boot, hcn-init.service adjusts the configuration and
+			# the wicked.service starting after sets up the bondings.
 		fi
 	done
 
 	hcnlog DEBUG "scanhcn: scan for hybrid virtual network finished"
+	return $E_SUCCESS
+}
+scanhcn() {
+	case $SERVICE in
+		NetworkManager.service)
+			scanhcn_nm
+			;;
+		wicked.service)
+			scanhcn_wicked
+			;;
+	esac
+}
+
+# function check_network_service
+#	Check what connection manager is used
+#	On SUSE, it's wicked.sevice (SLES) or NetworkManager.service (SLED)
+#	with the network.service alias pointing to the enabled service.
+#
+check_network_service() {
+
+	DISTRO="Unknown"
+	if test -f /etc/os-release; then
+		DISTRO=$(grep -oP '(?<=^ID=).+' /etc/os-release | tr -d '"')
+	fi
+
+	#Validate distro service CLI packages is installed to manage networking
+	case $DISTRO in
+		sles|sled|*suse*)
+			SERVICE=$(systemctl show -P Id network.service 2>/dev/null)
+			case $SERVICE in
+				wicked.service)
+					source /usr/lib/powerpc-utils/functions.suse || \
+					err $E_EPERM "Unable to source SUSE function library"
+
+					if ! wicked --version >/dev/null 2>&1; then
+						err $E_ENETUNREACH "wicked management command not installed"
+					fi
+					# hcn-init.service starts before wicked
+					;;
+				NetworkManager.service)
+					if ! nmcli --version >/dev/null 2>&1; then
+						err $E_ENETUNREACH "nmcli management command not installed"
+					fi
+					# hcn-init.service starts after network manager
+					if ! systemctl is-active -q "$SERVICE" ; then
+						err $E_ENETUNREACH "NetworkManager.service not active"
+					fi
+					;;
+				*)
+					err $E_ENETUNREACH "HNV is only supported on wicked and NetworkManager"
+					;;
+			esac
+			;;
+		*)
+			if ! nmcli --version >/dev/null 2>&1; then
+				err $E_ENETUNREACH "HNV is only supported on NetworkManager"
+			fi
+
+			# Assume it's NetworkManager.service -- at least the cli is available
+			SERVICE=NetworkManager.service
+			if ! systemctl is-active -q "$SERVICE" ; then
+				err $E_ENETUNREACH "NetworkManager.service not active"
+			fi
+			;;
+	esac
+
+	hcnlog INFO " LPAR is running OS $DISTRO with network service ${SERVICE%.service}"
 }
 
 #
@@ -643,32 +1056,8 @@ echo "=======================$NOW============================"
 HCNCMD=$(basename "$0")
 hcnlog DEBUG "$HCNCMD enter"
 
-#Validate this tool is running on powerpc platform
-. "$PSERIES_PLATFORM"
-if [ "$platform" != "$PLATFORM_PSERIES_LPAR" ]; then
-	hcnlog INFO "HNV is only supported on PowerVM LPAR"
-	hcnlog INFO "$HCNCMD exit"
-	exit 0
-fi
-
-#Validate NMCLI packages is install to manage networking
-if ! nmcli --version >/dev/null 2>&1; then
-	err $E_ENETUNREACH
-fi
-if [[ $VERSION == "1.0" ]]; then
-	VNIC_SPT="OFF"
-fi
-
-#Validate bonding module is loaded
-if ! lsmod | grep -q bonding; then
-	hcnlog DEBUG "HCNMGR: Bonding module not loaded, load module ..."
-	if ! modprobe bonding; then
-		err $E_NOMODULE
-	fi
-fi
-
 #getops for help and version
-while getopts "sVhd:" arg; do
+while getopts "sxVhd:" arg; do
 	case "$arg" in
 	V)
 		show_version
@@ -680,6 +1069,9 @@ while getopts "sVhd:" arg; do
 		;;
 	s)
 		HCNCMD="hcnscan"
+		;;
+	x)
+		HCNTRACE="-x"
 		;;
 	d)
 		hcnlog DEBUG "HMC pass log level at $OPTARG"
@@ -694,6 +1086,28 @@ done
 
 #Log this scripts command line to syslog
 hcnlog INFO "$HCNCMD $*"
+
+#Enable bash -x or -vx call trace if requested
+if [ "X$HCNTRACE" != "X" ] ; then
+	set "$HCNTRACE"
+fi
+
+#Validate this tool is running on powerpc platform
+. "$PSERIES_PLATFORM"
+if [ "$platform" != "$PLATFORM_PSERIES_LPAR" ]; then
+	hcnlog INFO "HNV is only supported on PowerVM LPAR"
+	hcnlog INFO "$HCNCMD exit"
+	exit 0
+fi
+
+#Init the distribution and the network service
+check_network_service
+
+#Validate bonding module is loaded
+hcnlog DEBUG "HCNMGR: Loading bonding module if not already present"
+if ! modprobe bonding $BOND_MODPROBE_OPTS; then
+	err $E_NOMODULE
+fi
 
 #Parse the DRC_INDEX and HCN_ID from the arguments
 for param in "$@"; do

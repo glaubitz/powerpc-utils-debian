@@ -26,6 +26,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -232,7 +233,7 @@ static int parse_sysfsname(void)
 {
 	char path[BUFSZ];
 	char *devspec;
-	char *at;
+	char *at, *nl;
 	uint32_t addr;
 	uint64_t phb_id;
 
@@ -246,6 +247,14 @@ static int parse_sysfsname(void)
 	devspec = read_file(path, NULL);
 	if (!devspec)
 		return 1;
+
+	/* Linux Kernel Commit: 14c19b2a40b6 ("PCI/sysfs: Add 'devspec' newline")
+	 * began reporting the devspec value for pci devices with a trailing newline.
+	 * Remove the newline if present to ensure our built pathname for obtaining
+	 * the config address is valid. */
+	nl = strchr(devspec, '\n');
+	if (nl)
+		*nl = '\0';
 
 	/* Now we parse something like /pci@400000000112/pci@2/ethernet@1 for
 	 * BUID HI =4000 and LOW 00000112 */
@@ -446,9 +455,9 @@ int ioa_bus_error(ei_function *ei_func, int is64bit)
 		if (rc) {
 			printf("Unable to find info for %s:\n", loc_code);
 			if (is64bit)
-				printf("ADDR MASK:\t\t%.16lx\n", mask);
+				printf("ADDR MASK:\t\t%"PRIu64".16lx\n", mask);
 			else
-				printf("ADDR MASK:\t\t%.8lx\n", mask);
+				printf("ADDR MASK:\t\t%"PRIu64".8x\n", mask);
 			printf("CONFIG ADDR:\t\t%x\n", config_addr);
 			printf("PHB UNIT_ID:\t\t%x%.8x\n", phb_id_hi,
 			       phb_id_lo);
@@ -465,9 +474,9 @@ int ioa_bus_error(ei_function *ei_func, int is64bit)
 		if (rc) {
 			printf("Unable to find info for %s:\n", sysfsname);
 			if (is64bit)
-				printf("ADDR MASK:\t\t%.16lx\n", mask);
+				printf("ADDR MASK:\t\t%"PRIu64".16lx\n", mask);
 			else
-				printf("ADDR MASK:\t\t%.8lx\n", mask);
+				printf("ADDR MASK:\t\t%"PRIu64".8lx\n", mask);
 			printf("CONFIG ADDR:\t\t%x\n", config_addr);
 			printf("PHB UNIT_ID:\t\t%x%.8x\n", phb_id_hi,
 			       phb_id_lo);
@@ -502,11 +511,11 @@ int ioa_bus_error(ei_function *ei_func, int is64bit)
 			printf(" with the following data:\n\n");
 
 			if (is64bit) {
-				printf("BUS ADDR:\t\t%.16lx\n", bus_addr);
-				printf("ADDR MASK:\t\t%.16lx\n", mask);
+				printf("BUS ADDR:\t\t%"PRIu64".16lx\n", bus_addr);
+				printf("ADDR MASK:\t\t%"PRIu64".16lx\n", mask);
 			} else {
-				printf("BUS ADDR:\t\t%.8lx\n", bus_addr);
-				printf("ADDR MASK:\t\t%.8lx\n", mask);
+				printf("BUS ADDR:\t\t%"PRIu64".8lx\n", bus_addr);
+				printf("ADDR MASK:\t\t%"PRIu64".8lx\n", mask);
 			}
 			printf("CONFIG ADDR:\t\t%x\n", config_addr);
 			printf("PHB UNIT_ID:\t\t%x%.8x\n", phb_id_hi,

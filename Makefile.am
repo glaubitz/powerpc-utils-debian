@@ -55,7 +55,7 @@ EXTRA_DIST += $(bin_SCRIPTS) $(sbin_SCRIPTS) $(man_MANS)
 
 EXTRA_DIST += COPYING Changelog powerpc-utils.spec.in doc/activate_firmware.doxycfg \
 	     doc/nvram.doxycfg doc/rtas_ibm_get_vpd.doxycfg doc/serv_config.doxycfg \
-	     doc/set_poweron_time.doxycfg doc/uesensor.doxycfg
+	     doc/set_poweron_time.doxycfg doc/uesensor.doxycfg scripts/functions.suse
 
 if WITH_SYSTEMD
 sbin_SCRIPTS += scripts/smtstate
@@ -165,6 +165,7 @@ src_drmgr_drmgr_SOURCES = \
 	src/drmgr/drslot_chrp_pci.c \
 	src/drmgr/drslot_chrp_phb.c \
 	src/drmgr/drslot_chrp_slot.c \
+	src/drmgr/dracc_chrp_acc.c \
 	src/drmgr/rtas_calls.c \
 	src/drmgr/prrn.c \
 	$(pseries_platform_SOURCES)
@@ -223,10 +224,12 @@ if WITH_SYSTEMD
 install-data-hook:
 	$(MKDIR_P) $(DESTDIR)${systemd_unit_dir}
 	$(MKDIR_P) $(DESTDIR)/var/lib/@PACKAGE@
+	$(MKDIR_P) $(DESTDIR)/usr/lib/@PACKAGE@
 	$(INSTALL_DATA) systemd/smt_off.service $(DESTDIR)${systemd_unit_dir}/
 	$(INSTALL_DATA) systemd/smtstate.service $(DESTDIR)${systemd_unit_dir}/
 	$(INSTALL_DATA) systemd/hcn-init.service $(DESTDIR)${systemd_unit_dir}/
 	$(INSTALL_DATA) var/lib/powerpc-utils/smt.state $(DESTDIR)/var/lib/@PACKAGE@/
+	$(INSTALL_SCRIPT) scripts/functions.suse $(DESTDIR)/usr/lib/@PACKAGE@/
 	$(INSTALL_SCRIPT) scripts/smtstate $(DESTDIR)@sbindir@
 	sed -i -e 's,$${exec_prefix},@prefix@,g' $(DESTDIR)${systemd_unit_dir}/smt_off.service
 	sed -i -e 's,$${exec_prefix},@prefix@,g' $(DESTDIR)${systemd_unit_dir}/smtstate.service
