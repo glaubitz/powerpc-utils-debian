@@ -1,3 +1,2 @@
 version=4
-opts=filenamemangle=s/.+\/v?(\d\S*)\.tar\.gz/powerpc-utils-$1\.tar\.gz/ \
-  https://github.com/nfont/powerpc-utils/releases .*/v?(\d\S*)(?<!1.4)\.tar\.gz
+https://github.com/ibm-power-utilities/powerpc-utils/tags .*/v?(\d.*)\.(?:tgz|tbz2|tar\.(?:gz|bz2|xz))
