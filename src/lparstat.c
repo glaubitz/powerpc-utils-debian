@@ -180,7 +180,7 @@ int parse_sysfs_values(void)
 
 	spurr = idle_spurr = idle_purr = 0UL;
 
-	for (i = 0; cpu_sysfs_fds[i].spurr > 0; i++) {
+	for (i = 0; (i < threads_in_system) && (cpu_sysfs_fds[i].spurr >= 0); i++) {
 		rc = pread(cpu_sysfs_fds[i].spurr, (void *)line, sizeof(line), 0);
 		if (rc == -1) {
 			fprintf(stderr, "Failed to read /sys/devices/system/cpu/cpu%d/spurr\n",
@@ -718,6 +718,16 @@ void get_capped_mode(struct sysentry *se, char *buf)
 	sprintf(buf, "%s", value);
 }
 
+void get_dedicated_mode(struct sysentry *se, char *buf)
+{
+	const char *value = "Capped";
+
+	if (se->value[0] == '1')
+		value = "Donating";
+
+	sprintf(buf, "%s", value);
+}
+
 void get_percent_entry(struct sysentry *se, char *buf)
 {
 	float value;
@@ -1057,7 +1067,10 @@ void print_system_configuration(void)
 	get_sysdata("shared_processor_mode", &descr, value);
 	offset = sprintf(buf, "type=%s ", value);
 	sprintf(type, "%s", value);
-	get_sysdata("capped", &descr, value);
+	if (!strcmp(value, "Dedicated"))
+		get_sysdata("DedDonMode", &descr, value);
+	else
+		get_sysdata("capped", &descr, value);
 	offset += sprintf(buf + offset, "mode=%s ", value);
 	get_sysdata("smt_state", &descr, value);
 	offset += sprintf(buf + offset, "smt=%s ", value);
