@@ -1,3 +1,10 @@
+powerpc-utils (1.3.11-1) unstable; urgency=medium
+
+  * New upstream release
+  * Drop patch to change udvadm program path from /usr/bin to /bin
+
+ -- John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>  Fri, 04 Aug 2023 23:47:39 +0200
+
 powerpc-utils (1.3.10-2) unstable; urgency=medium
 
   * Drop bogus --parallel from dh command in debian/rules
