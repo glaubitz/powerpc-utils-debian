@@ -1,6 +1,6 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
-m4_define([ppu_version], 1.3.10)
+m4_define([ppu_version], 1.3.11)
 
 AC_PREREQ([2.63])
 AC_INIT([powerpc-utils], ppu_version, [tyreld@linux.ibm.com])
@@ -84,7 +84,7 @@ AC_SUBST(LIBDL)
 # check for systemd
 systemd_unit_dir=/lib/systemd/system
 AC_ARG_WITH([systemd],
-	[AC_HELP_STRING([--with-systemd@<:@=DIR@:>@],
+	[AS_HELP_STRING([--with-systemd@<:@=DIR@:>@],
                     [install systemd unit files (not default and unit dir is /lib/systemd/system)])],
 	[if test "$withval" = "no"; then
 		with_systemd=0
@@ -98,14 +98,14 @@ AM_CONDITIONAL(WITH_SYSTEMD, [test "$with_systemd" = 1])
 AC_SUBST(systemd_unit_dir)
 
 AC_ARG_ENABLE([werror],
-    AS_HELP_STRING([--disable-werror], [avoid treating compiler warnings as fatal errors]))
+    AS_HELP_STRING([--enable-werror], [treat compiler warnings as fatal errors]))
 
 AC_DEFUN([LOCAL_CHECK_FLAGS],[
   AC_REQUIRE([AX_CHECK_LINK_FLAG])
   AC_REQUIRE([AX_APPEND_COMPILE_FLAGS])
   AC_LANG_PUSH([C])
   AX_APPEND_COMPILE_FLAGS([-Wall])
-  AS_IF([test "x$enable_werror" != "xno"], [AX_APPEND_COMPILE_FLAGS([-Werror])])
+  AS_IF([test "x$enable_werror" == "xyes"], [AX_APPEND_COMPILE_FLAGS([-Werror])])
   AX_APPEND_COMPILE_FLAGS([-D_FORTIFY_SOURCE=2 -fstack-protector-all])
   AX_APPEND_COMPILE_FLAGS([-fwrapv -fPIE -Wstack-protector])
   AX_APPEND_COMPILE_FLAGS([--param=ssp-buffer-size=1])

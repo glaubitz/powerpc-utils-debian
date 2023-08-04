@@ -691,12 +691,15 @@ void post_mobility_update(void)
 		devtree_update();
 	}
 }
-	
+
 int drmig_chrp_pmig(void)
 {
 	int rc;
-	char sys_src[20];
 	uint64_t stream_val;
+	enum drc_type drc_type = DRC_TYPE_NONE;
+
+	if (usr_action == MIGRATE)
+		drc_type = DRC_TYPE_MIGRATION;
 
 	/* Ensure that this partition is migratable/mobile */
 	if (! pmig_capable()) {
@@ -705,14 +708,11 @@ int drmig_chrp_pmig(void)
 		return -1;
 	}
 
-	/* Today we do no pre-checks for migratability. The only check
-	 * we could do is whether the "ibm,suspend-me" RTAS call exists.
-	 * But if it doesn't, the firmware level doesn't support migration,
-	 * in which case why the heck are we being invoked anyways.
-	 */
-	if (strcmp(usr_p_option, "check") == 0) {
-		say(DEBUG, "check: Nothing to do...\n");
-		return 0;
+	if (usr_action == MIGRATE && (strcmp(usr_p_option, "check") == 0)) {
+		rc = run_hooks(drc_type, HOOK_CHECK);
+		if (rc)
+			run_hooks(drc_type, HOOK_UNDOCHECK);
+		return rc;
 	}
 
 	/* The only other command is pre, any other command is invalid */
@@ -732,13 +732,12 @@ int drmig_chrp_pmig(void)
 		say(ERROR, "Invalid streamid specified: %s\n", strerror(errno));
 		return -1;
 	}
-	
-	/* Get the ID of the original system, for later logging */
-	get_str_attribute(OFDT_BASE, "system-id", sys_src, 20);
-	sleep(5);
 
 	/* Now do the actual migration */
 	do {
+		if (usr_action == MIGRATE)
+			run_hooks(drc_type, HOOK_PRE);
+
 		if (usr_action == MIGRATE)
 			rc = do_migration(stream_val);
 		else if (usr_action == HIBERNATE)
@@ -753,13 +752,12 @@ int drmig_chrp_pmig(void)
 
 	syslog(LOG_LOCAL0 | LOG_INFO, "drmgr: %s rc %d\n",
 	       (usr_action == MIGRATE ? "migration" : "hibernation"), rc);
-	if (rc)
-		return rc;
 
-	post_mobility_update();
+	if (!rc)
+		post_mobility_update();
 
-	say(DEBUG, "Refreshing RMC via refrsrc\n");
-	rc = system("/usr/sbin/rsct/bin/refrsrc IBM.ManagementServer");
-
-	return 0;
+	/* Post hook is called even if the migration has failed */
+	if (usr_action == MIGRATE)
+		run_hooks(drc_type, HOOK_POST);
+	return rc;
 }

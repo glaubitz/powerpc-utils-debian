@@ -13,14 +13,14 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     strategy:
       matrix:
         host: [powerpc-linux-gnu, powerpc64-linux-gnu, powerpc64le-linux-gnu, x86_64-linux-gnu]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
       with:
         repository: ibm-power-utilities/librtas
         path: ./librtas
@@ -44,7 +44,7 @@ jobs:
         sudo make install
         cd ..
 
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
       with:
         repository: madler/zlib
         ref: v1.2.11
@@ -59,7 +59,7 @@ jobs:
         sudo make install
         cd ..
 
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
       with:
         repository: numactl/numactl
         ref: v2.0.14
@@ -75,7 +75,7 @@ jobs:
         sudo make install
         cd ..
 
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Register problem matchers
       run: |
@@ -86,7 +86,7 @@ jobs:
 
     - name: configure
       run: |
-       ./configure --prefix=/usr --host=${{ matrix.host }} --disable-werror --build=x86_64-linux-gnu CFLAGS='-O2 -g'
+       ./configure --prefix=/usr --host=${{ matrix.host }} --enable-werror --build=x86_64-linux-gnu CFLAGS='-O2 -g'
 
     - name: Collect config.log
       if: ${{ failure() }}
@@ -100,4 +100,4 @@ jobs:
 
     - name: distcheck
       run: |
-        make distcheck V=1 DISTCHECK_CONFIGURE_FLAGS='--disable-werror --host=${{ matrix.host }}'
+        make distcheck V=1 DISTCHECK_CONFIGURE_FLAGS='--enable-werror --host=${{ matrix.host }}'

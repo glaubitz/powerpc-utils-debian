@@ -50,8 +50,6 @@ static char *loc_code;       /**< location code of adapter to inject to */
 
 #define IOA_BUSERR_MAXFUNC		19
 
-#define BUFSZ 4000
-
 /**
  * ioa_buserr_fnames
  * @brief list of IOA bus error functionalities
@@ -194,20 +192,16 @@ int ioa_bus_error_arg(char arg, char *optarg)
  * Given the directory /proc/device-tree/pci@...,
  * yank out the config address out of the reg file
  *
- * @param devpath device-tree path of the reg file
+ * @param regpath device-tree path of the reg file
  * @return 0 on failure, config address (!0) on success
  */
-static uint32_t get_config_addr_from_reg(char *devpath)
+static uint32_t get_config_addr_from_reg(char *regpath)
 {
-	char path[BUFSZ];
 	char *buf;
 	uint32_t *be_caddr;
 	uint32_t caddr = 0;
 
-	strncpy(path, devpath, BUFSZ-5);
-	strcat(path, "/reg");
-
-	buf = read_file(path, NULL);
+	buf = read_file(regpath, NULL);
 	if (!buf)
 		return 1;
 
@@ -231,7 +225,7 @@ static uint32_t get_config_addr_from_reg(char *devpath)
  */
 static int parse_sysfsname(void)
 {
-	char path[BUFSZ];
+	char path[PATH_MAX];
 	char *devspec;
 	char *at, *nl;
 	uint32_t addr;
@@ -272,6 +266,7 @@ static int parse_sysfsname(void)
 	/* Obtain the config address from the device-tree reg file */
 	strcpy(path, "/proc/device-tree/");
 	strcat(path, devspec);
+	strcat(path, "/reg");
 	addr = get_config_addr_from_reg(path);
 	if (addr) {
 		config_addr = addr;
@@ -307,7 +302,7 @@ static char *recurse_hunt_file_contents(char *base_path, const char *filename,
 					const char *desired_file_contents,
 					int chase_link_cnt)
 {
-	char path[BUFSZ];
+	char path[PATH_MAX];
 	char *loco;
 
 	strcpy(path, base_path);
@@ -380,7 +375,7 @@ static char *recurse_hunt_file_contents(char *base_path, const char *filename,
  */
 static int hunt_loc_code(void)
 {
-	char path[BUFSZ];
+	char path[PATH_MAX];
 	char *match_dir;
 	char *devspec;
 	char *at;
@@ -412,6 +407,7 @@ static int hunt_loc_code(void)
 	phb_id_lo = phb_id & 0xFFFFFFFF;
 
 	/* Try to get the config address from the dev-tree reg file. */
+	strcat(path, "/reg");
 	addr = get_config_addr_from_reg(path);
 	if (addr) {
 		config_addr = addr;
