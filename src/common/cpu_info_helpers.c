@@ -83,6 +83,20 @@ int __sysattr_is_writeable(char *attribute, int threads_in_system)
 	return test_sysattr(attribute, W_OK, threads_in_system);
 }
 
+int cpu_physical_id(int thread)
+{
+	char path[SYSFS_PATH_MAX];
+	int rc, physical_id;
+
+	sprintf(path, SYSFS_CPUDIR"/physical_id", thread);
+	rc = get_attribute(path, "%d", &physical_id);
+
+	/* This attribute does not exist in kernels without hotplug enabled */
+	if (rc && errno == ENOENT)
+		return -1;
+	return physical_id;
+}
+
 int cpu_online(int thread)
 {
 	char path[SYSFS_PATH_MAX];
@@ -245,7 +259,7 @@ int __do_smt(bool numeric, int cpus_in_system, int threads_per_cpu,
 			if (smt_state == 0)
 				smt_state = thread + 1;
 			else if (smt_state > 0)
-				smt_state = -1; /* mix of SMT modes */
+				smt_state = 0; /* mix of SMT modes */
 		}
 	}
 
@@ -257,7 +271,7 @@ int __do_smt(bool numeric, int cpus_in_system, int threads_per_cpu,
 			printf("SMT=1\n");
 		else
 			printf("SMT is off\n");
-	} else if (smt_state == -1) {
+	} else if (smt_state == 0) {
 		for (thread = 0; thread < threads_per_cpu; thread++) {
 			if (CPU_COUNT_S(cpu_state_size,
 						cpu_states[thread])) {

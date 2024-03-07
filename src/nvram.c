@@ -460,8 +460,12 @@ nvram_parse_partitions(struct nvram *nvram)
 	c_sum = checksum(phead);
 	if (c_sum != phead->checksum)
 	    warn_msg("this partition checksum should be %02x!\n", c_sum);
-	phead->length = be16toh(phead->length);
-	p_start += phead->length * NVRAM_BLOCK_SIZE;
+	if (phead->length != 0) {
+		phead->length = be16toh(phead->length);
+		p_start += phead->length * NVRAM_BLOCK_SIZE;
+	} else {
+		break;
+	}
     }
 
     if (verbose)
@@ -1280,7 +1284,7 @@ print_of_config(struct nvram *nvram, char *config_var, char *pname,
 
 	data = (char *)phead + sizeof(*phead);
 	while (*data != '\0') {
-	    if ((data[varlen] == '=') && 
+	    if (strlen(data) > varlen && (data[varlen] == '=') &&
 		strncmp(config_var, data, varlen) == 0) {
 		printf("%s%c", data + varlen + 1, terminator);
 		rc = 0;

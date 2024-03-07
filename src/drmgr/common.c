@@ -56,7 +56,7 @@ static long dr_timeout;
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
-static char *drc_type_str[] = {
+static const char * const drc_type_str[] = {
 	[DRC_TYPE_NONE]		= "unknwon",
 	[DRC_TYPE_PCI]		= "pci",
 	[DRC_TYPE_SLOT]		= "slot",
@@ -69,11 +69,22 @@ static char *drc_type_str[] = {
 	[DRC_TYPE_ACC]		= "acc",
 };
 
-static char *hook_phase_name[] = {
+static const char * const hook_phase_name[] = {
 	[HOOK_CHECK]		= "check",
 	[HOOK_UNDOCHECK]	= "undocheck",
 	[HOOK_PRE]		= "pre",
 	[HOOK_POST]		= "post",
+};
+
+static const char * const hook_action_name[] = {
+	[NONE]		= "none",
+	[ADD]		= "add",
+	[REMOVE]	= "remove",
+	[QUERY]		= "query",
+	[REPLACE]	= "replace",
+	[IDENTIFY]	= "identify",
+	[MIGRATE]	= "migrate",
+	[HIBERNATE]	= "hibernate",
 };
 
 /**
@@ -1555,7 +1566,8 @@ enum drc_type to_drc_type(const char *arg)
 	return DRC_TYPE_NONE;
 }
 
-static int run_one_hook(enum drc_type drc_type,	enum hook_phase phase,
+static int run_one_hook(enum drc_type drc_type, enum drmgr_action action,
+			enum hook_phase phase, const char *drc_count_str,
 			const char *name)
 {
 	int rc;
@@ -1602,6 +1614,8 @@ static int run_one_hook(enum drc_type drc_type,	enum hook_phase phase,
 
 	if (clearenv() ||
 	    setenv("DRC_TYPE", drc_type_str[drc_type], 1) ||
+	    setenv("DRC_COUNT", drc_count_str, 1) ||
+	    setenv("ACTION", hook_action_name[action], 1) ||
 	    setenv("PHASE", hook_phase_name[phase], 1)) {
 		say(ERROR, "Can't set environment variables: %s\n",
 		    strerror(errno));
@@ -1624,11 +1638,13 @@ static int is_file_or_link(const struct dirent *entry)
  * Run all executable hooks found in a given directory.
  * Return 0 if all run script have returned 0 status.
  */
-int run_hooks(enum drc_type drc_type, enum hook_phase phase)
+int run_hooks(enum drc_type drc_type, enum drmgr_action action,
+	      enum hook_phase phase, int drc_count)
 {
 	int rc = 0, fdd, num, i;
 	DIR *dir;
 	struct dirent **entries = NULL;
+	char *drc_count_str;
 
 	/* Sanity check */
 	if (drc_type <= DRC_TYPE_NONE || drc_type >= ARRAY_SIZE(drc_type_str)) {
@@ -1655,6 +1671,12 @@ int run_hooks(enum drc_type drc_type, enum hook_phase phase)
 			is_file_or_link, versionsort);
 	closedir(dir);
 
+	if (asprintf(&drc_count_str, "%d", drc_count) == -1) {
+		say(ERROR, "Can't allocate new string : %s", strerror(errno));
+		free(entries);
+		return -1;
+	}
+
 	for (i = 0; i < num; i++) {
 		struct stat st;
 		struct dirent *entry = entries[i];
@@ -1680,13 +1702,15 @@ int run_hooks(enum drc_type drc_type, enum hook_phase phase)
 			say(WARN, "Can't stat file %s: %s\n",
 			    name, strerror(errno));
 		else if (S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR) &&
-			 run_one_hook(drc_type, phase, name))
+			 run_one_hook(drc_type, action, phase, drc_count_str,
+				      name))
 			rc = 1;
 
 		free(name);
 		free(entry);
 	}
 
+	free(drc_count_str);
 	free(entries);
 	return rc;
 }
