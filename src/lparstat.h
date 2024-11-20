@@ -45,7 +45,7 @@ struct cpu_sysfs_file_desc {
 };
 typedef struct cpu_sysfs_file_desc cpu_sysfs_fd;
 
-extern void get_smt_state(struct sysentry *, char *);
+extern void get_processor_type(struct sysentry *, char *);
 extern void get_capped_mode(struct sysentry *, char *);
 extern void get_dedicated_mode(struct sysentry *, char *);
 extern void get_memory_mode(struct sysentry *, char *);
@@ -60,7 +60,6 @@ extern void get_cpu_stat(struct sysentry *, char *);
 extern void get_cpu_physc(struct sysentry *, char *);
 extern void get_per_entc(struct sysentry *, char *);
 extern void get_cpu_app(struct sysentry *, char *);
-extern void get_sys_uptime(struct sysentry *, char *);
 extern void get_cpu_util_purr(struct sysentry *unused_se, char *buf);
 extern void get_cpu_idle_purr(struct sysentry *unused_se, char *buf);
 extern void get_cpu_util_spurr(struct sysentry *unused_se, char *buf);
@@ -124,6 +123,8 @@ struct sysentry system_data[] = {
 	 .get = &get_percent_entry},
 	{.name = "pool_idle_time",
 	 .descr = "Shared Processor Pool Idle Time"},
+	{.name = "boot_pool_idle_time",
+	 .descr = "Shared Processor Pool Idle Time"},
 	{.name = "pool_num_procs",
 	 .descr = "Shared Processor Pool Processors"},
 	{.name = "unallocated_capacity_weight",
@@ -155,7 +156,7 @@ struct sysentry system_data[] = {
 	 .descr = "Maximum Virtual CPUs"},
 	{.name = "shared_processor_mode",
 	 .descr = "Type",
-	 .get = &get_smt_state},
+	 .get = &get_processor_type},
 	{.name = "slb_size",
 	 .descr = "SLB Entries"},
 	{.name = "MinMem",
@@ -269,11 +270,6 @@ struct sysentry system_data[] = {
 	/* /proc/interrupts */
 	{.name = "phint",
 	 .descr = "Phantom Interrupts"},
-
-	/* /proc/uptime */
-	{.name = "uptime",
-	 .descr = "System Uptime",
-	 .get = &get_sys_uptime},
 
 	/* /sys/devices/system/cpu/cpu<n>/ */
 	/* Sum of per CPU SPURR registers */

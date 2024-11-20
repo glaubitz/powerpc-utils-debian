@@ -295,7 +295,7 @@ add_child_node(struct dr_node *parent, char *child_path)
  * @param node
  * @returns 0 on success, !0 otherwise
  */
-static int
+int
 init_node(struct dr_node *node)
 {
 	DIR *d;
@@ -969,7 +969,7 @@ get_node_by_name(const char *drc_name, uint32_t node_type)
 		/* See if the drc index was specified */
 		drc_index = strtoul(drc_name, NULL, 0);
 		if (node->drc_index == drc_index)
-			continue;
+			break;
 
 		for (child = node->children; child; child = child->next) {
 			if (strcmp(drc_name, child->drc_name) == 0)
@@ -1390,7 +1390,6 @@ print_node_list(struct dr_node *first_node)
 static int
 acquire_hp_resource(struct dr_connector *drc, char *of_path)
 {
-	struct of_node *new_nodes;
 	int state;
 	int rc;
 
@@ -1429,11 +1428,21 @@ acquire_hp_resource(struct dr_connector *drc, char *of_path)
 	}
 
 	if (state == PRESENT) {
-		new_nodes = configure_connector(drc->index);
-		if (new_nodes == NULL)
-			return -1;
+		/*
+		 * Use kernel DLPAR interface if it is enabled
+		 */
+		if (kernel_dlpar_exists()) {
+			rc = do_dt_kernel_dlpar(drc->index, ADD);
+		} else {
+			struct of_node *new_nodes;
 
-		rc = add_device_tree_nodes(of_path, new_nodes);
+			new_nodes = configure_connector(drc->index);
+			if (new_nodes == NULL)
+				return -1;
+
+			rc = add_device_tree_nodes(of_path, new_nodes);
+			free_of_node(new_nodes);
+		}
 		if (rc) {
 			say(ERROR, "add nodes failed for 0x%x\n", drc->index);
 			return rc;
@@ -1489,7 +1498,14 @@ release_hp_resource(struct dr_node *node)
 {
 	int rc;
 
-	rc = remove_device_tree_nodes(node->ofdt_path);
+	/*
+	 * Use kernel DLPAR interface if it is enabled
+	 */
+	if (kernel_dlpar_exists())
+		rc = do_dt_kernel_dlpar(node->drc_index, REMOVE);
+	else
+		rc = remove_device_tree_nodes(node->ofdt_path);
+
 	if (rc) {
 		say(ERROR, "failed to remove kernel nodes for index 0x%x\n",
 		    node->drc_index);
@@ -1617,4 +1633,33 @@ int disable_hp_children(char *drc_name)
 			return 1;
 	}
 	return 0;
+}
+
+/*
+ * kernel interface to update device tree nodes.
+ * dlpar dt [add|remove] index <#drc index>
+ */
+int do_dt_kernel_dlpar(uint32_t index, int action)
+{
+	char cmdbuf[256];
+	int offset;
+
+	offset = sprintf(cmdbuf, "%s ", "dt");
+
+	switch (action) {
+	case ADD:
+		offset += sprintf(cmdbuf + offset, "add ");
+		break;
+	case REMOVE:
+		offset += sprintf(cmdbuf + offset, "remove ");
+		break;
+	default:
+		/* Should not happen */
+		say(ERROR, "Invalid action type specified\n");
+		return -EINVAL;
+	}
+
+	offset += sprintf(cmdbuf + offset, "index 0x%x", index);
+
+	return do_kernel_dlpar(cmdbuf, offset);
 }

@@ -56,6 +56,8 @@
 #define DIAGNOSTICS_RUN_MODE	42
 #define CPU_OFFLINE		-1
 
+#define SYS_SMT_CONTROL "/sys/devices/system/cpu/smt/control"
+
 #ifdef HAVE_LINUX_PERF_EVENT_H
 struct cpu_freq {
 	int offline;
@@ -360,6 +362,36 @@ static int is_dscr_capable(void)
 	return 0;
 }
 
+/*
+ * Depends on kernel's CONFIG_HOTPLUG_CPU
+ * Return -1 for fatal error, -2 to retry.
+ */
+static int set_smt_control(int smt_state)
+{
+	if (set_attribute(SYS_SMT_CONTROL, "%d", smt_state)) {
+		switch (errno) {
+			case ENOENT:
+			/*
+			 * The kernel does not have the interface.
+			 * Try the old method.
+			 */
+				return -2;
+			case ENODEV:
+			/*
+			 * Setting SMT state not supported by this interface.
+			 * On older kernels (before Linux 6.6) the generic interface
+			 * may exist but is not hooked on powerpc resulting in ENODEV
+			 * on kernels that can set SMT using the old interface.
+			 */
+				return -2;
+			default:
+				perror(SYS_SMT_CONTROL);
+				return -1;
+		}
+	}
+	return 0;
+}
+
 static int do_smt(char *state, bool numeric)
 {
 	int rc = 0;
@@ -388,7 +420,9 @@ static int do_smt(char *state, bool numeric)
 			return -1;
 		}
 
-		rc = set_smt_state(smt_state);
+		/* Try using smt/control if failing, fall back to the legacy way */
+		if ((rc = set_smt_control(smt_state)) == -2)
+			rc = set_smt_state(smt_state);
 	}
 
 	return rc;
