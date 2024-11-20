@@ -108,17 +108,16 @@ release_phb(struct dr_node *phb)
 {
 	int rc;
 
-	rc = remove_device_tree_nodes(phb->ofdt_path);
-	if (rc)
-		return rc;
-
-	if (phb->phb_ic_ofdt_path[0] != '\0') {
-		rc = remove_device_tree_nodes(phb->phb_ic_ofdt_path);
-		if (rc)
-			return rc;
+	if (kernel_dlpar_exists())
+		rc = do_dt_kernel_dlpar(phb->drc_index, REMOVE);
+	else {
+		rc = remove_device_tree_nodes(phb->ofdt_path);
+		if (!rc && (phb->phb_ic_ofdt_path[0] != '\0'))
+			rc = remove_device_tree_nodes(phb->phb_ic_ofdt_path);
 	}
 
-	rc = release_drc(phb->drc_index, PHB_DEV);
+	if (!rc)
+		rc = release_drc(phb->drc_index, PHB_DEV);
 
 	return rc;
 }
@@ -283,9 +282,11 @@ static int disable_os_hp_children(struct dr_node *phb)
  */
 static int remove_phb(void)
 {
-	struct dr_node *phb;
+	struct dr_node *phb, *partner_phb = NULL;
 	struct dr_node *child;
 	struct dr_node *hp_list = NULL;
+	uint32_t partner_drc_index = 0;
+	char drc_index_str[10];
 	int rc = 0;
 
 	phb = get_node_by_name(usr_drc_name, PHB_NODES);
@@ -303,6 +304,20 @@ static int remove_phb(void)
 	if (phb_has_dlpar_children(phb)) {
 		rc = -1;
 		goto phb_remove_error;
+	}
+
+	/* Find the multipath partner device index if available */
+	rc = get_my_partner_drc_index(phb, &partner_drc_index);
+	if (!rc && partner_drc_index) {
+		sprintf(drc_index_str, "%d", partner_drc_index);
+
+		/* Find the partner phb device */
+		partner_phb = get_node_by_name(drc_index_str, PHB_NODES);
+		if (partner_phb) {
+			printf("Partner adapter location : %s",
+					partner_phb->drc_name);
+			printf(" Partner adapter must be removed\n");
+		}
 	}
 
 	/* Now, disable any hotplug children */
@@ -358,6 +373,9 @@ phb_remove_error:
 	if (phb)
 		free_node(phb);
 
+	if (partner_phb)
+		free_node(partner_phb);
+
 	if (hp_list)
 		free_node(hp_list);
 
@@ -371,7 +389,6 @@ phb_remove_error:
 static int acquire_phb(char *drc_name, struct dr_node **phb)
 {
 	struct dr_connector drc;
-	struct of_node *of_nodes;
 	char path[DR_PATH_MAX];
 	int rc;
 
@@ -386,14 +403,20 @@ static int acquire_phb(char *drc_name, struct dr_node **phb)
 	if (rc)
 		return rc;
 
-	of_nodes = configure_connector(drc.index);
-	if (of_nodes == NULL) {
-		release_drc(drc.index, PHB_DEV);
-		return -1;
-	}
+	if (kernel_dlpar_exists()) {
+		rc = do_dt_kernel_dlpar(drc.index, ADD);
+	} else {
+		struct of_node *of_nodes;
 
-	rc = add_device_tree_nodes(path, of_nodes);
-	free_of_node(of_nodes);
+		of_nodes = configure_connector(drc.index);
+		if (of_nodes == NULL) {
+			release_drc(drc.index, PHB_DEV);
+			return -1;
+		}
+
+		rc = add_device_tree_nodes(path, of_nodes);
+		free_of_node(of_nodes);
+	}
 	if (rc) {
 		say(ERROR, "add_device_tree_nodes failed at %s\n", path);
 		release_drc(drc.index, PHB_DEV);
@@ -422,8 +445,13 @@ static int acquire_phb(char *drc_name, struct dr_node **phb)
  */
 static int add_phb(void)
 {
-	struct dr_node *phb = NULL;
+	struct dr_node *phb = NULL, *partner_phb = NULL;
+	uint32_t partner_drc_index = 0;
+	char drc_index_str[10];
 	int rc, n_children = 0;
+	struct dr_connector drc;
+	char path[DR_PATH_MAX];
+	int partner_rc = 0;
 
 	phb = get_node_by_name(usr_drc_name, PHB_NODES);
 	if (phb) {
@@ -488,9 +516,39 @@ static int add_phb(void)
 		}
 	}
 
+	if (!rc) {
+		/* Find the multipath partner device index if available */
+		partner_rc = get_my_partner_drc_index(phb, &partner_drc_index);
+		if (!partner_rc && partner_drc_index) {
+			sprintf(drc_index_str, "%d", partner_drc_index);
+			/* If the partner device is already added */
+			partner_phb = get_node_by_name(drc_index_str,
+							PHB_NODES);
+			if (partner_phb) {
+				printf("<%s> has partner device <%s>\n",
+				       phb->drc_name, partner_phb->drc_name);
+			} else {
+				/*
+				 * Find out if the partner device can be
+				 * configured. Get the DRC info for the
+				 * partner DRC index
+				 */
+				partner_rc = get_drc_by_index(partner_drc_index,
+							&drc, path, OFDT_BASE);
+				if (partner_rc)
+					printf("<%s> can have partner "
+						"device but not assigned to "
+						"LPAR yet\n", phb->drc_name);
+			}
+		}
+	}
+
 phb_add_error:
 	if (phb)
 		free_node(phb);
+
+	if (partner_phb)
+		free_node(partner_phb);
 
 	return rc;
 }
