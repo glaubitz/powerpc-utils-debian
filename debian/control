@@ -9,7 +9,7 @@ Build-Depends: debhelper-compat (= 12),
                librtas-dev,
                librtasevent-dev,
                zlib1g-dev
-Standards-Version: 4.6.2
+Standards-Version: 4.7.0
 Homepage: http://powerpc-utils.ozlabs.org/
 Vcs-Browser: https://salsa.debian.org/debian/powerpc-utils
 Vcs-Git: https://salsa.debian.org/debian/powerpc-utils.git
