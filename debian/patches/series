@@ -1,1 +1,2 @@
 0001-pseries_platform.h-Fix-ifdef-guard-typo.patch
+0002-nvram.c-Correct-librtas-function-prototypes.patch
