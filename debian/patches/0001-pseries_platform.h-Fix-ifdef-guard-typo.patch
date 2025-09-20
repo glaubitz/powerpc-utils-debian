@@ -1,0 +1,22 @@
+From: Michal Suchanek <msuchanek@suse.de>
+Date: Mon, 4 Aug 2025 13:11:00 +0200
+Subject: pseries_platform.h: Fix ifdef guard typo
+
+Signed-off-by: Michal Suchanek <msuchanek@suse.de>
+---
+ src/common/pseries_platform.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/common/pseries_platform.h b/src/common/pseries_platform.h
+index 440c3e6..5fa12ff 100644
+--- a/src/common/pseries_platform.h
++++ b/src/common/pseries_platform.h
+@@ -19,7 +19,7 @@
+  */
+ 
+ #ifndef PLATFORM_H
+-#define PLARFORM_H
++#define PLATFORM_H
+ 
+ #define PLATFORM_FILE	"/proc/cpuinfo"
+ 
