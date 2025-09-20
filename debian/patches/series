@@ -1,2 +1,3 @@
 0001-pseries_platform.h-Fix-ifdef-guard-typo.patch
 0002-nvram.c-Correct-librtas-function-prototypes.patch
+0003-sys_ident-Quiet-strncpy-warning.patch
