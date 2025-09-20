@@ -1,3 +1,12 @@
+powerpc-utils (1.3.13-2) unstable; urgency=medium
+
+  * Cherry-pick upstream patches to fix FTBFS with gcc-15 (Closes: #1115718)
+    - Add patch to fix ifdef guard typo in pseries_platform.h
+    - Add patch to correct librtas function prototypes in nvram.c
+    - Add patch to quiet strncpy() warning sys_ident.c
+
+ -- John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>  Sat, 20 Sep 2025 08:44:40 +0200
+
 powerpc-utils (1.3.13-1) unstable; urgency=medium
 
   * New upstream release
